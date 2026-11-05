@@ -45,6 +45,13 @@ def validate(data) -> str | None:
     return None
 
 
+def inline(value) -> str:
+    text = str(value).strip()
+    if not text:
+        return ""
+    return f"`{text.strip('`')}`"
+
+
 def bullets(items, empty: str = "未提供。") -> str:
     lines = [f"- {str(item).strip()}" for item in items or [] if str(item).strip()]
     return "\n".join(lines) or empty
@@ -74,7 +81,7 @@ def evidence_block(items) -> str:
                 if item.get("line_stop"):
                     location += f"-{item['line_stop']}"
         ref = item.get("ref")
-        suffix = f"（{location}）" if location else (f"（{ref}）" if ref else "")
+        suffix = f"（{inline(location)}）" if location else (f"（{inline(ref)}）" if ref else "")
         if summary:
             lines.append(f"- {summary}{suffix}")
     return "\n".join(lines) or "未提供。"
@@ -98,14 +105,14 @@ def render_answer(
     title = issue_title.strip() or "未提供标题"
     root = str(answer.get("root_cause") or "").strip()
     hint = str(answer.get("ai_fix_hint") or "").strip()
-    versions = "、".join(str(item) for item in answer.get("affected_versions") or []) or "未确定"
+    versions = "、".join(inline(item) for item in answer.get("affected_versions") or []) or "未确定"
     allowed = {str(item).lower() for item in (repo_cfg.get("triage") or {}).get("write_only", [])}
     raw_labels = [
         str(item)
         for item in answer.get("labels") or []
         if str(item).lower() in allowed and str(item).lower() != "needs triage"
     ]
-    labels = ", ".join(raw_labels) or "无"
+    labels = ", ".join(inline(item) for item in raw_labels) or "无"
     values = {
         "{{issue_number}}": issue,
         "{{issue_title}}": title,
@@ -113,7 +120,7 @@ def render_answer(
             "> **部分结论**：分析在时限内未完成，以下为已完成内容。\n\n" if partial else ""
         ),
         "{{issue_summary}}": bullets(answer.get("issue_summary")),
-        "{{issue_type}}": str(answer.get("issue_type") or "unknown"),
+        "{{issue_type}}": inline(answer.get("issue_type") or "unknown"),
         "{{affected_versions}}": versions,
         "{{labels}}": labels,
         "{{evidence}}": evidence_block(answer.get("evidence")),

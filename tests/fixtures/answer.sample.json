@@ -1,12 +1,12 @@
 {
   "issue_type": "crash",
   "issue_summary": [
-    "版本：v1.0.5（1.21.1 NeoForge）",
+    "版本：`v1.0.5`（`1.21.1` NeoForge）",
     "类型：崩溃 / Crash",
     "现象：进入世界后立即崩溃"
   ],
   "conclusion": "配方注册阶段对空物品栈解引用，导致崩溃。",
-  "root_cause": "注册表在材料替换后仍持有旧 ItemStack 引用。",
+  "root_cause": "注册表在材料替换后仍持有旧 `ItemStack` 引用。",
   "confidence": "medium",
   "confidence_reason": "有崩溃报告与代码路径双重证据，但缺少完整 mod 列表。",
   "evidence": [
@@ -26,7 +26,7 @@
     "升级到包含修复的版本"
   ],
   "fix_plan": [
-    "在替换材料前复制 ItemStack。",
+    "在替换材料前复制 `ItemStack`。",
     "为注册阶段增加空值保护并补充回归用例。"
   ],
   "ai_fix_hint": "最小上下文：RecipeMap 注册链路；验证：用同一崩溃报告重跑。",

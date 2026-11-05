@@ -50,6 +50,12 @@ class RenderTest(unittest.TestCase):
         self.assertIn("## 置信度", text)
         self.assertIn("```text", text)
         self.assertIn("RecipeMap.java:120-138", text)
+        self.assertIn("`core/src/main/java/gregtech/api/recipe/RecipeMap.java:120-138`", text)
+        self.assertIn("`ItemStack`", text)
+        self.assertIn("`crash`", text)
+        self.assertIn("`1.21.1`", text)
+        self.assertIn("- 类型：`crash`", text)
+        self.assertIn("最小上下文：RecipeMap 注册链路", text)
         self.assertIn("lily:done", text)
         self.assertNotIn("lily:partial", text)
 
@@ -87,7 +93,7 @@ class RenderTest(unittest.TestCase):
         text = render.render_answer(
             answer, repo_cfg, "", "abc", partial=False, issue_title="t", issue_number="1"
         )
-        self.assertIn("建议标签：crash", text)
+        self.assertIn("建议标签：`crash`", text)
         self.assertNotIn("wontfix", text)
 
     def test_scan_blocks_exact_secret(self):

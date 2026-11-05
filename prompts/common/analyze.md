@@ -32,6 +32,19 @@
    overlay 的类型约定组织结论。
 5. 如果 issue 是 bug/crash 但完全没有日志，明确写“缺少日志，无法定位”，不要编造根因。
 
+## Markdown 格式
+
+- 除了 `ai_fix_hint`，所有会进入评论的 Markdown 字段（`issue_summary`、`conclusion`、
+  `root_cause`、`confidence_reason`、`evidence[].summary`、`user_advice`、`fix_plan`）
+  中，关键字和代码标识符使用行内 code：
+  - Java 类名、方法名、字段名、枚举值、常量、包名：`CrucibleFaucetBlock.toolInteraction`
+  - 文件路径与行号：`minecraft/src/main/java/gregtech/content/block/machine/CrucibleFaucetBlock.java:74-76`
+  - 配置键、标签、版本、加载器名、日志关键字、命令：`autoPull`、`FACING`、`1.21.1`、`v1.0.4`
+- 普通自然语言不要包 code；不要把整句或整段包成 code。
+- `ai_fix_hint` 是纯文本：不要使用行内 code、标题或列表；渲染器会把它放进 `text`
+  代码块。
+- `labels` / `affected_versions` 数组只放裸值，不加反引号；渲染器负责展示。
+
 ## 输出
 
 按 nodes 提示词增量写入 `outputs/answer.md`，最后写入 `outputs/answer.json`，字段严格
@@ -74,6 +87,6 @@
 ```
 
 - `labels` 只能来自仓库 overlay 或仓库配置给出的集合；不要创建新标签。
-- 结论用中文；代码标识符与日志原文保持原样。
+- 结论用中文；代码标识符与日志原文保持原样，并按上面的 Markdown 规则使用行内 code。
 - 证据最多 40 条，每条都要能被维护者复核。
 - `issue_summary` 用 3–6 条事实；`user_advice` 用 2–4 条用户可执行动作。

@@ -27,6 +27,14 @@
 - `translation`：给出 key、当前译文、建议译文；不需要日志。
 - `enhancement` / `question`：按代码现状回答可行性与影响面。
 
+## Markdown 格式
+
+- 在结论、证据、用户建议和修复方案中，类名、方法名、字段、枚举、路径、标签、版本、
+  加载器名、日志关键字使用行内 code，例如 `CrucibleFaucetBlock.toolInteraction`、
+  `core/src/main/java/.../CrucibleFaucetBlock.java:74-76`、`autoPull`、`FACING`、
+  `v1.0.4`、`1.21.1`。
+- `ai_fix_hint` 保持纯文本，不使用行内 code；渲染器会把它放入 `text` 代码块。
+
 ## 标签
 
 `labels` 只能从以下集合选择：
