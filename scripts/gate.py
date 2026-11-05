@@ -89,7 +89,7 @@ def l1_classify(title: str, body: str) -> tuple[dict, dict | None]:
     try:
         content, entry = model_pool.failover_chat(
             pool,
-            "l1",
+            "preflight",
             health,
             pool_cfg,
             messages,
@@ -241,13 +241,13 @@ def main() -> None:
 
     verdict, used_l1 = l1_classify(snapshot["issue"]["title"], body)
     model_pool.write_health(SELF_TOKEN, B_REPO, health)
-    l2_entries = model_pool.candidates(pool, "l2", health)
+    analysis_entries = model_pool.candidates(pool, "analysis", health)
     c.dump_json(
         INPUTS / "model.json",
         {
             "pool": tenant.get("model_pool", "shared"),
-            "l1_entry": used_l1,
-            "l2_entries": l2_entries,
+            "preflight_entry": used_l1,
+            "analysis_entries": analysis_entries,
         },
     )
 

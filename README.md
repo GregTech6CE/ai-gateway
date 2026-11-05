@@ -57,7 +57,7 @@ environment 只负责暂停 analysis job；LLM key 仍然是 repo secret。
 ## 模型池
 
 - `config/models.json` 分两层：`endpoints` 是健康单位（provider + base_url + key + model），
-  `roles` 只是绑定（l1/l2 选择 endpoint、context、effort、priority）。
+  `roles` 只是绑定（preflight/analysis 选择 endpoint、context、effort、priority）。
 - endpoint 被 401/429 打挂时，所有绑定它的 role 都不可用；role 本身不单独记状态。
 - 健康状态存在 B 的 repo variable `MODEL_HEALTH`；gate 读取并更新，write-back 合并。
 - 重置：`gh variable set MODEL_HEALTH --repo Tanimodori/lily-chan-bot --body '{}'`。

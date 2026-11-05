@@ -1,7 +1,7 @@
 """共享模型池：endpoint 是健康单位，role 只是绑定。仅使用标准库。
 
 - endpoint：provider + base_url + api_key_env + model，是会被 401/429 打挂的对象。
-- role：l1 / l2，只决定用哪个 endpoint、context、effort 与顺序。
+- role：preflight / analysis，只决定用哪个 endpoint、context、effort 与顺序。
 - down/cooldown 只记在 endpoint 上；一个 endpoint 挂了，所有绑定它的 role 都不可用。
 """
 
@@ -219,12 +219,12 @@ def chat(
     return data["choices"][0]["message"]["content"]
 
 
-def preflight(entry: dict, key: str, cfg: dict) -> None:
+def probe(entry: dict, key: str, cfg: dict) -> None:
     chat(
         entry,
         key,
         [{"role": "user", "content": "ping"}],
-        max_tokens=int(cfg.get("l2_preflight_max_tokens", 8)),
+        max_tokens=int(cfg.get("analysis_probe_max_tokens", 8)),
         temperature=0,
         timeout=30,
     )

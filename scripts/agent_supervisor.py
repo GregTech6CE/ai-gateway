@@ -268,7 +268,7 @@ def main() -> None:
         write_result({"status": "failed", "reason": "inputs/model.json missing"}, {"endpoints": {}}, 0)
         return
     model = json.loads(model_path.read_text(encoding="utf-8"))
-    entries = model.get("l2_entries") or []
+    entries = model.get("analysis_entries") or []
     if not entries:
         write_result({"status": "failed", "reason": "no healthy L2 entry"}, {"endpoints": {}}, 0)
         return
@@ -288,7 +288,7 @@ def main() -> None:
         attempts += 1
         archive_attempt(attempts)
         try:
-            model_pool.preflight(entry, key, pool_cfg)
+            model_pool.probe(entry, key, pool_cfg)
         except model_pool.ModelError as exc:
             model_pool.mark_failure(state, entry, exc, pool_cfg)
             if exc.kind in ("rate", "upstream", "network") and time.monotonic() < deadline - 120:
@@ -298,10 +298,10 @@ def main() -> None:
                     model_pool.preflight(entry, key, pool_cfg)
                 except model_pool.ModelError as second:
                     model_pool.mark_failure(state, entry, second, pool_cfg)
-                    final = {**final, "reason": f"preflight: {second.kind}", "entry_id": entry["id"]}
+                    final = {**final, "reason": f"probe: {second.kind}", "entry_id": entry["id"]}
                     continue
             else:
-                final = {**final, "reason": f"preflight: {exc.kind}", "entry_id": entry["id"]}
+                final = {**final, "reason": f"probe: {exc.kind}", "entry_id": entry["id"]}
                 continue
 
         result = run_codex(entry, key, deadline)
@@ -312,7 +312,7 @@ def main() -> None:
         error = classify_log(read_log())
         if error:
             model_pool.mark_failure(state, entry, error, pool_cfg)
-            if not bool(pool_cfg.get("l2_retry_once", True)):
+            if not bool(pool_cfg.get("analysis_retry_once", True)):
                 break
             if time.monotonic() > deadline - 300:
                 break

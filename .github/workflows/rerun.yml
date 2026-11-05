@@ -68,7 +68,7 @@ jobs:
           tenant = c.load_tenant(os.environ["TENANT"])
           pool = model_pool.load_pool(tenant.get("model_pool", "shared"))
           health = model_pool.read_health(os.environ.get("SELF_TOKEN", ""), os.environ.get("B_REPO", ""))
-          c.dump_json("inputs/model.json", {"pool": tenant.get("model_pool", "shared"), "l1_entry": None, "l2_entries": model_pool.candidates(pool, "l2", health)})
+          c.dump_json("inputs/model.json", {"pool": tenant.get("model_pool", "shared"), "preflight_entry": None, "analysis_entries": model_pool.candidates(pool, "analysis", health)})
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"sha={snap['sha256']}\n")
           PY
