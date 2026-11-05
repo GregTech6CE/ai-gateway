@@ -42,22 +42,23 @@ def post_placeholder() -> dict:
     return api("POST", f"/repos/{repo}/issues/{issue}/comments", token, {"body": body})
 
 
-def precheck(repo: str, issue: str, token: str) -> str:
+def precheck(repo: str, issue: str, token: str) -> tuple[str, str]:
     repo_cfg = c.load_repo(repo)
     if not repo_cfg.get("enabled"):
-        return "repo disabled"
+        return "repo disabled", ""
     data = api("GET", f"/repos/{repo}/issues/{issue}", token)
+    title = " ".join(str(data.get("title") or "").split())[:120]
     if data.get("pull_request"):
-        return "pull request, not an issue"
+        return "pull request, not an issue", title
     if data.get("state") != "open":
-        return "issue is not open"
+        return "issue is not open", title
     groups = (repo_cfg.get("triage") or {}).get("process_only") or []
     if groups:
         groups = [group if isinstance(group, list) else [group] for group in groups]
         labels = {str(item.get("name", "")).lower() for item in data.get("labels", [])}
         if not any(all(str(x).lower() in labels for x in group) for group in groups):
-            return "process_only not matched"
-    return ""
+            return "process_only not matched", title
+    return "", title
 
 
 def start() -> None:
@@ -71,7 +72,7 @@ def start() -> None:
     b_pat = env("B_PAT")
     if not b_pat:
         raise SystemExit("B_PAT missing")
-    skip = precheck(repo, issue, env("GH_RW_TOKEN"))
+    skip, issue_title = precheck(repo, issue, env("GH_RW_TOKEN"))
     if skip:
         print(json.dumps({"skipped": skip, "repo": repo, "issue": issue}, ensure_ascii=False))
         return
@@ -83,6 +84,7 @@ def start() -> None:
         "inputs": {
             "repo": repo,
             "issue": issue,
+            "issue_title": issue_title,
             "event": event,
             "comment_id": comment_id,
             "dry_run": "true" if dry_run else "false",

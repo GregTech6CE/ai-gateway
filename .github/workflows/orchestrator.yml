@@ -1,5 +1,7 @@
 name: orchestrator
 
+run-name: "${{ inputs.repo }}#${{ inputs.issue }} · ${{ inputs.issue_title || '（未提供标题）' }}"
+
 on:
   workflow_dispatch:
     inputs:
@@ -10,6 +12,10 @@ on:
       issue:
         description: issue 编号
         required: true
+        type: string
+      issue_title:
+        description: issue 标题（仅用于 run 名称）
+        required: false
         type: string
       comment_id:
         description: 触发评论 id（issue_comment 事件）
