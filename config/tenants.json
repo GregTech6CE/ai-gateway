@@ -20,13 +20,13 @@
       "llm_key_env": "LLM_KEY_GT6CE_FORK",
       "llm": {
         "base_url_env": "LLM_BASE_URL",
-        "provider_alias": "agg",
+        "provider_alias": "mistral",
         "wire_api": "chat",
-        "l1_model": "deepseek-v4.1-flash",
+        "l1_model": "deepseek-v4-flash-1017",
         "l1_context": 200000,
         "l1_effort": "low",
-        "l2_model": "deepseek-v4.1-flash",
-        "l2_context": 1000000,
+        "l2_model": "deepseek-v4-flash-1017",
+        "l2_context": 1048576,
         "l2_effort": "high"
       },
       "comment_language": "zh",
@@ -41,7 +41,9 @@
         "1.21.1"
       ],
       "reject": {
-        "only": ["spam"],
+        "only": [
+          "spam"
+        ],
         "min_confidence": 0.9
       }
     },
@@ -64,13 +66,13 @@
       "llm_key_env": "LLM_KEY_GT6CE_ORG",
       "llm": {
         "base_url_env": "LLM_BASE_URL",
-        "provider_alias": "agg",
+        "provider_alias": "mistral",
         "wire_api": "chat",
-        "l1_model": "deepseek-v4.1-flash",
+        "l1_model": "deepseek-v4-flash-1017",
         "l1_context": 200000,
         "l1_effort": "low",
-        "l2_model": "deepseek-v4.1-flash",
-        "l2_context": 1000000,
+        "l2_model": "deepseek-v4-flash-1017",
+        "l2_context": 1048576,
         "l2_effort": "high"
       },
       "comment_language": "zh",
@@ -85,7 +87,9 @@
         "1.21.1"
       ],
       "reject": {
-        "only": ["spam"],
+        "only": [
+          "spam"
+        ],
         "min_confidence": 0.9
       }
     }
