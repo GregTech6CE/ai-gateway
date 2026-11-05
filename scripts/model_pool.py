@@ -213,7 +213,7 @@ def probe(entry: dict, key: str, cfg: dict) -> None:
         entry,
         key,
         [{"role": "user", "content": "ping"}],
-        max_tokens=int(cfg.get("analysis_probe_max_tokens", 8)),
+        max_tokens=int(entry.get("probe_max_tokens", cfg.get("analysis_probe_max_tokens", 8))),
         temperature=0,
         timeout=30,
     )
