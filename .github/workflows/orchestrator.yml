@@ -3,12 +3,8 @@ name: orchestrator
 on:
   workflow_dispatch:
     inputs:
-      tenant:
-        description: 租户 id（config/tenants.json）
-        required: true
-        type: string
       repo:
-        description: issue 所在仓库（owner/name）
+        description: issue 所在仓库（owner/name，config/repos.json 的键）
         required: true
         type: string
       issue:
@@ -51,6 +47,7 @@ jobs:
       code_repo: ${{ steps.gate.outputs.code_repo }}
       code_ref: ${{ steps.gate.outputs.code_ref }}
       code_refs: ${{ steps.gate.outputs.code_refs }}
+      cache_prefix: ${{ steps.gate.outputs.cache_prefix }}
       issue_title: ${{ steps.gate.outputs.issue_title }}
     steps:
       - uses: actions/checkout@v4
@@ -59,21 +56,20 @@ jobs:
         id: app_ro
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ inputs.tenant == 'gt6ce-fork' && vars.LILY_APP_CLIENT_ID || vars.GT6CE_APP_CLIENT_ID }}
-          private-key: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LILY_APP_PRIVATE_KEY || secrets.GT6CE_APP_PRIVATE_KEY }}
+          client-id: ${{ vars.LILY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LILY_APP_PRIVATE_KEY }}
           permission-issues: read
           permission-contents: read
       - name: App token (issues:write)
         id: app_rw
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ inputs.tenant == 'gt6ce-fork' && vars.LILY_APP_CLIENT_ID || vars.GT6CE_APP_CLIENT_ID }}
-          private-key: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LILY_APP_PRIVATE_KEY || secrets.GT6CE_APP_PRIVATE_KEY }}
+          client-id: ${{ vars.LILY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LILY_APP_PRIVATE_KEY }}
           permission-issues: write
       - name: Gate
         id: gate
         env:
-          TENANT: ${{ inputs.tenant }}
           REPO: ${{ inputs.repo }}
           ISSUE: ${{ inputs.issue }}
           COMMENT_ID: ${{ inputs.comment_id }}
@@ -116,16 +112,16 @@ jobs:
         id: app_ro
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ inputs.tenant == 'gt6ce-fork' && vars.LILY_APP_CLIENT_ID || vars.GT6CE_APP_CLIENT_ID }}
-          private-key: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LILY_APP_PRIVATE_KEY || secrets.GT6CE_APP_PRIVATE_KEY }}
+          client-id: ${{ vars.LILY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LILY_APP_PRIVATE_KEY }}
           permission-issues: read
           permission-contents: read
       - name: Restore GT6 mirror
         uses: actions/cache/restore@v4
         with:
           path: .cache/gt6.git
-          key: gt6-mirror-${{ github.run_id }}
-          restore-keys: gt6-mirror-
+          key: ${{ needs.gate.outputs.cache_prefix }}-${{ github.run_id }}
+          restore-keys: ${{ needs.gate.outputs.cache_prefix }}-
       - name: Sync mirror and create worktrees
         env:
           CODE_REPO: ${{ needs.gate.outputs.code_repo }}
@@ -134,7 +130,9 @@ jobs:
           set -euo pipefail
           mkdir -p .cache
           if [ -d .cache/gt6.git ]; then
+            git -C .cache/gt6.git remote set-url origin "https://github.com/$CODE_REPO.git"
             git -C .cache/gt6.git fetch --prune --tags
+            git -C .cache/gt6.git worktree prune
           else
             git clone --mirror "https://github.com/$CODE_REPO.git" .cache/gt6.git
           fi
@@ -153,14 +151,13 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: .cache/gt6.git
-          key: gt6-mirror-${{ github.run_id }}
+          key: ${{ needs.gate.outputs.cache_prefix }}-${{ github.run_id }}
       - name: Install Codex CLI (pin before production)
         run: npm install -g @openai/codex@0.166.0
       - name: Prefetch attachments
         run: python scripts/prefetch.py
       - name: Run Codex under supervisor
         env:
-          TENANT: ${{ inputs.tenant }}
           REPO: ${{ inputs.repo }}
           ISSUE: ${{ inputs.issue }}
           GH_RO_TOKEN: ${{ steps.app_ro.outputs.token }}
@@ -196,14 +193,14 @@ jobs:
         id: app_rw
         uses: actions/create-github-app-token@v3
         with:
-          client-id: ${{ inputs.tenant == 'gt6ce-fork' && vars.LILY_APP_CLIENT_ID || vars.GT6CE_APP_CLIENT_ID }}
-          private-key: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LILY_APP_PRIVATE_KEY || secrets.GT6CE_APP_PRIVATE_KEY }}
+          client-id: ${{ vars.LILY_APP_CLIENT_ID }}
+          private-key: ${{ secrets.LILY_APP_PRIVATE_KEY }}
           permission-issues: write
       - name: Render
         continue-on-error: true
         run: |
           python scripts/render.py \
-            --tenant "${{ inputs.tenant }}" \
+            --repo "${{ inputs.repo }}" \
             --issue "${{ inputs.issue }}" \
             --issue-title "${{ needs.gate.outputs.issue_title }}" \
             --snapshot "${{ needs.gate.outputs.snapshot_hash }}" \
@@ -212,7 +209,6 @@ jobs:
             --reason "$(python -c 'import json;print(json.load(open("outputs/result.json")).get("reason",""))' 2>/dev/null || echo '')"
       - name: Write back
         env:
-          TENANT: ${{ inputs.tenant }}
           REPO: ${{ inputs.repo }}
           ISSUE: ${{ inputs.issue }}
           COMMENT_ID: ${{ needs.gate.outputs.comment_id }}

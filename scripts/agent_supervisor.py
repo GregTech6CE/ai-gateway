@@ -17,14 +17,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as c  # noqa: E402
 import model_pool  # noqa: E402
 
-TENANT_ID = c.env("TENANT")
 REPO = c.env("REPO")
 ISSUE = str(c.env("ISSUE"))
 GH_RO = c.env("GH_RO_TOKEN", "")
 BOT_ENABLED = c.env("BOT_ENABLED", "true").lower()
 RERUN_PROMPT = os.environ.get("RERUN_PROMPT", "")
 
-tenant = c.load_tenant(TENANT_ID)
+repo_cfg = c.load_repo(REPO)
 budget = c.budgets()
 pool_cfg = budget.get("model_pool", {})
 OUTPUTS = c.ROOT / "outputs"
@@ -262,6 +261,9 @@ def write_result(result: dict, state: dict, attempts: int) -> None:
 def main() -> None:
     if BOT_ENABLED == "false":
         write_result({"status": "failed", "reason": "BOT_ENABLED=false"}, {"endpoints": {}}, 0)
+        return
+    if not repo_cfg.get("enabled"):
+        write_result({"status": "failed", "reason": "repo disabled"}, {"endpoints": {}}, 0)
         return
     model_path = c.ROOT / "inputs/model.json"
     if not model_path.exists():

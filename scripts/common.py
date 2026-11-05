@@ -73,15 +73,22 @@ def paginate(path: str, token: str, max_pages: int = 10):
     return items
 
 
-def load_tenant(tenant_id: str):
-    real = ROOT / "config/tenants.json"
-    path = real if real.exists() else ROOT / "config/tenants.example.json"
-    tenants = load_json(path)["tenants"]
-    if tenant_id not in tenants:
-        raise SystemExit(f"unknown tenant: {tenant_id}")
+def load_repo(repo: str):
+    real = ROOT / "config/repos.json"
     if not real.exists():
-        raise SystemExit("config/tenants.json missing; copy config/tenants.example.json")
-    return tenants[tenant_id]
+        raise SystemExit("config/repos.json missing; copy config/repos.example.json")
+    data = load_json(real)
+    key = str(repo or "").strip().lower()
+    entry = (data.get("repos") or {}).get(key)
+    if entry is None:
+        raise SystemExit(f"unknown repo: {repo}")
+    entry = dict(entry)
+    entry["_repo"] = repo
+    entry["_key"] = key
+    bot = data.get("bot") or {}
+    entry["bot_login"] = entry.get("bot_login", bot.get("login", ""))
+    entry["bot_mention"] = entry.get("bot_mention", bot.get("mention", ""))
+    return entry
 
 
 def budgets():
@@ -150,8 +157,9 @@ def set_output(name: str, value: str) -> None:
             fh.write(f"{name}={value}\n")
 
 
-def bot_login_matches(user: dict, tenant: dict) -> bool:
+def bot_login_matches(user: dict, repo_cfg: dict) -> bool:
     login = (user or {}).get("login", "")
-    return login == tenant.get("bot_login", "") or (
-        user.get("type") == "Bot" and login.startswith(tenant.get("bot_login", "").split("[")[0])
+    expected = repo_cfg.get("bot_login", "")
+    return login == expected or (
+        user.get("type") == "Bot" and login.startswith(expected.split("[")[0])
     )

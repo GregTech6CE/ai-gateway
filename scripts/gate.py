@@ -19,7 +19,6 @@ import model_pool  # noqa: E402
 INPUTS = c.ROOT / "inputs"
 INPUTS.mkdir(exist_ok=True)
 
-TENANT_ID = c.env("TENANT")
 REPO = c.env("REPO")
 ISSUE = str(c.env("ISSUE"))
 COMMENT_ID = c.env("COMMENT_ID", "")
@@ -32,19 +31,22 @@ B_REPO = c.env("B_REPO", os.environ.get("GITHUB_REPOSITORY", ""))
 RUN_URL = c.env("RUN_URL", "")
 DRY_RUN = c.env("DRY_RUN", "false").lower() == "true"
 
-tenant = c.load_tenant(TENANT_ID)
 budget = c.budgets()
 pool_cfg = budget.get("model_pool", {})
-pool = model_pool.load_pool(tenant.get("model_pool", "shared"))
-health = model_pool.read_health(SELF_TOKEN, B_REPO)
+repo_cfg: dict = {}
+pool = None
+health = None
 ALLOWED_ASSOC = {"OWNER", "MEMBER", "COLLABORATOR"}
+
+
+def cache_prefix(code_repo: str) -> str:
+    return "gt6-mirror-" + code_repo.lower().replace("/", "-")
 
 
 def finish(decision: str, reason: str, **extra) -> None:
     verdict = {
         "decision": decision,
         "reason": reason,
-        "tenant": TENANT_ID,
         "repo": REPO,
         "issue": int(ISSUE),
         "captured_at": datetime.now(timezone.utc).isoformat(),
@@ -85,17 +87,17 @@ def resolve_ref() -> str:
     body = issue.get("body") or ""
     version = c.form_field(body, "模组版本 / Mod version", "模组版本", "Mod version").strip()
     base = version[1:] if version[:1].lower() == "v" else version
-    template = tenant.get("tag_template", "v{version}")
+    template = repo_cfg.get("tag_template", "v{version}")
     candidates: list[str] = []
-    if base and tenant.get("code_ref_mode", "tag") == "tag":
+    if base and repo_cfg.get("code_ref_mode", "tag") == "tag":
         formatted = template.replace("{version}", base)
         if formatted:
             candidates.append(formatted)
         if base not in candidates:
             candidates.append(base)
-    fallback = tenant.get("fallback_ref", "master")
+    fallback = repo_cfg.get("fallback_ref", "master")
     candidates.append(fallback)
-    tags = remote_tags(tenant["code_repo"])
+    tags = remote_tags(repo_cfg["code_repo"])
     if tags:
         for candidate in candidates:
             if candidate in tags:
@@ -138,7 +140,7 @@ def l1_classify(title: str, body: str) -> tuple[dict, dict | None]:
 
 
 def triage_issue(issue: dict, body: str) -> list[str]:
-    cfg = tenant.get("triage", {})
+    cfg = repo_cfg.get("triage", {})
     triggers = {str(item).lower() for item in cfg.get("triage_labels", [])}
     current = {
         str(label.get("name", "")).lower(): str(label.get("name", ""))
@@ -200,12 +202,20 @@ def triage_issue(issue: dict, body: str) -> list[str]:
 
 
 def main() -> None:
+    global repo_cfg, pool, health
+    try:
+        repo_cfg = c.load_repo(REPO)
+    except SystemExit as exc:
+        finish("skip", str(exc))
     if BOT_ENABLED == "false":
         finish("skip", "BOT_ENABLED=false")
-    if not tenant.get("enabled"):
-        finish("skip", "tenant disabled")
-    if REPO.lower() != tenant["issue_repo"].lower():
-        finish("skip", "repo does not match tenant")
+    if not repo_cfg.get("enabled"):
+        finish("skip", "repo disabled")
+    if EVENT not in ("issues", "issue_comment"):
+        finish("skip", f"unknown event: {EVENT}")
+
+    pool = model_pool.load_pool(repo_cfg.get("model_pool", "shared"))
+    health = model_pool.read_health(SELF_TOKEN, B_REPO)
 
     try:
         data = c.request("GET", "/installation/repositories?per_page=100", GH_RO)
@@ -216,6 +226,16 @@ def main() -> None:
     if REPO.lower() not in installed:
         finish("skip", "repo is not covered by the App installation")
 
+    try:
+        if B_REPO:
+            bot_repo = c.request("GET", f"/repos/{B_REPO}", SELF_TOKEN)
+            if not bot_repo.get("private"):
+                target_repo = c.request("GET", f"/repos/{REPO}", GH_RO)
+                if target_repo.get("private"):
+                    finish("skip", "private issue repo with public bot repo")
+    except Exception as exc:
+        finish("skip", f"visibility check failed: {exc}")
+
     global issue
     issue = c.request("GET", f"/repos/{REPO}/issues/{ISSUE}", GH_RO)
     if issue.get("pull_request"):
@@ -223,7 +243,7 @@ def main() -> None:
     if issue.get("state") != "open":
         finish("skip", "issue is not open")
 
-    triage_cfg = tenant.get("triage", {})
+    triage_cfg = repo_cfg.get("triage", {})
     groups = triage_cfg.get("process_only") or []
     if groups:
         groups = [group if isinstance(group, list) else [group] for group in groups]
@@ -241,7 +261,8 @@ def main() -> None:
             finish("skip", "comment does not belong to this issue")
         if (comment.get("user") or {}).get("type") == "Bot":
             finish("skip", "bot comment")
-        if tenant.get("bot_mention", "").lower() not in (comment.get("body") or "").lower():
+        mention = repo_cfg.get("bot_mention", "").lower()
+        if not mention or mention not in (comment.get("body") or "").lower():
             finish("skip", "mention missing")
         association = comment.get("author_association", "")
         if association not in ALLOWED_ASSOC:
@@ -251,7 +272,7 @@ def main() -> None:
     now = datetime.now(timezone.utc)
     markers = []
     for item in comments:
-        if c.bot_login_matches(item.get("user") or {}, tenant):
+        if c.bot_login_matches(item.get("user") or {}, repo_cfg):
             for parsed in c.parse_markers(item.get("body") or ""):
                 markers.append((parsed, item))
     if any(parsed["kind"] == "done" for parsed, _ in markers):
@@ -270,7 +291,7 @@ def main() -> None:
     )
     same_issue = 0
     for item in recent:
-        if not c.bot_login_matches(item.get("user") or {}, tenant):
+        if not c.bot_login_matches(item.get("user") or {}, repo_cfg):
             continue
         if not str(item.get("issue_url", "")).endswith(f"/issues/{ISSUE}"):
             continue
@@ -286,7 +307,7 @@ def main() -> None:
     repo_count = sum(
         1
         for item in repo_recent
-        if c.bot_login_matches(item.get("user") or {}, tenant)
+        if c.bot_login_matches(item.get("user") or {}, repo_cfg)
         and any(p["kind"] == "requested" for p in c.parse_markers(item.get("body") or ""))
     )
     if repo_count >= budget["per_repo_per_day"]:
@@ -307,7 +328,6 @@ def main() -> None:
     texts = "\n".join([body] + [(item.get("body") or "") for item in comments])
     attachments = c.attachments(texts)
     snapshot = {
-        "tenant": TENANT_ID,
         "repo": REPO,
         "issue": {
             "number": issue["number"],
@@ -328,10 +348,10 @@ def main() -> None:
                 "body": item.get("body") or "",
             }
             for item in comments
-            if not c.bot_login_matches(item.get("user") or {}, tenant)
+            if not c.bot_login_matches(item.get("user") or {}, repo_cfg)
         ],
         "attachments": attachments,
-        "code_repo": tenant["code_repo"],
+        "code_repo": repo_cfg["code_repo"],
         "code_ref": resolve_ref(),
         "captured_at": now.isoformat(),
     }
@@ -348,31 +368,32 @@ def main() -> None:
     c.dump_json(
         INPUTS / "model.json",
         {
-            "pool": tenant.get("model_pool", "shared"),
+            "pool": repo_cfg.get("model_pool", "shared"),
             "preflight_entry": used_l1,
             "analysis_entries": analysis_entries,
         },
     )
 
     refs = [snapshot["code_ref"]]
-    for extra in tenant.get("extra_code_refs", []) or []:
+    for extra in repo_cfg.get("extra_code_refs", []) or []:
         extra = str(extra).strip()
         if extra and extra not in refs:
             refs.append(extra)
     code_refs = " ".join(refs)
+    run_cache_prefix = cache_prefix(repo_cfg["code_repo"])
 
     relevance = str(verdict.get("relevance", "in_scope")).lower()
     try:
         confidence = float(verdict.get("confidence", 0))
     except (TypeError, ValueError):
         confidence = 0.0
-    reject_cfg = tenant.get("reject", {})
+    reject_cfg = repo_cfg.get("reject", {})
     only = {item.lower() for item in reject_cfg.get("only", ["spam"])}
     min_conf = float(reject_cfg.get("min_confidence", 0.9))
     if relevance in only and confidence >= min_conf:
         body_text = (c.ROOT / "prompts/reject.md").read_text(encoding="utf-8").strip()
         body_text += "\n\n" + c.marker(
-            "rejected", repo=REPO, issue=ISSUE, reason=relevance, tenant=TENANT_ID
+            "rejected", repo=REPO, issue=ISSUE, reason=relevance
         )
         posted = (
             {}
@@ -389,6 +410,7 @@ def main() -> None:
             code_ref=snapshot["code_ref"],
             code_repo=snapshot["code_repo"],
             code_refs=code_refs,
+            cache_prefix=run_cache_prefix,
             issue_title=issue.get("title", ""),
         )
 
@@ -406,7 +428,6 @@ def main() -> None:
         "requested",
         repo=REPO,
         issue=ISSUE,
-        tenant=TENANT_ID,
         snapshot=snapshot["sha256"],
     )
     posted = (
@@ -422,6 +443,7 @@ def main() -> None:
         code_ref=snapshot["code_ref"],
         code_repo=snapshot["code_repo"],
         code_refs=code_refs,
+        cache_prefix=run_cache_prefix,
         issue_title=issue.get("title", ""),
         l1=json.dumps(verdict, ensure_ascii=False),
     )

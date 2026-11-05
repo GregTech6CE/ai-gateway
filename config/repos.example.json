@@ -1,0 +1,37 @@
+{
+  "bot": {
+    "login": "example-bot[bot]",
+    "mention": "@example-bot"
+  },
+  "repos": {
+    "owner/name": {
+      "enabled": false,
+      "code_repo": "owner/code",
+      "code_ref_mode": "tag",
+      "tag_template": "v{version}",
+      "fallback_ref": "master",
+      "reject": {
+        "only": [
+          "spam"
+        ],
+        "min_confidence": 0.9
+      },
+      "model_pool": "shared",
+      "extra_code_refs": [],
+      "triage": {
+        "process_only": [
+          [
+            "bug"
+          ]
+        ],
+        "write_only": [
+          "bug"
+        ],
+        "triage_labels": [
+          "needs triage"
+        ],
+        "remove_after_triage": true
+      }
+    }
+  }
+}

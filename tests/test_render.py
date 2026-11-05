@@ -13,10 +13,10 @@ import scan_out  # noqa: E402
 class RenderTest(unittest.TestCase):
     def test_answer_renders_maamend_style_sections(self):
         answer = json.loads((ROOT / "tests/fixtures/answer.sample.json").read_text(encoding="utf-8"))
-        tenant = {"issue_repo": "Tanimodori/GregTech6", "_issue": "1", "_tenant": "gt6ce-fork"}
+        repo_cfg = {"_repo": "Tanimodori/GregTech6", "_issue": "1"}
         text = render.render_answer(
             answer,
-            tenant,
+            repo_cfg,
             "https://example/run/1",
             "abc123",
             partial=False,
@@ -36,10 +36,10 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("lily:partial", text)
 
     def test_partial_has_banner_and_title(self):
-        tenant = {"issue_repo": "Tanimodori/GregTech6", "_issue": "1", "_tenant": "gt6ce-fork"}
+        repo_cfg = {"_repo": "Tanimodori/GregTech6", "_issue": "1"}
         text = render.render_markdown(
             "# 片段",
-            tenant,
+            repo_cfg,
             "",
             "abc",
             "timeout 60min",
@@ -61,14 +61,13 @@ class RenderTest(unittest.TestCase):
     def test_labels_filtered_by_write_only(self):
         answer = json.loads((ROOT / "tests/fixtures/answer.sample.json").read_text(encoding="utf-8"))
         answer["labels"] = ["crash", "wontfix"]
-        tenant = {
-            "issue_repo": "Tanimodori/GregTech6",
+        repo_cfg = {
+            "_repo": "Tanimodori/GregTech6",
             "_issue": "1",
-            "_tenant": "gt6ce-fork",
             "triage": {"write_only": ["crash"]},
         }
         text = render.render_answer(
-            answer, tenant, "", "abc", partial=False, issue_title="t", issue_number="1"
+            answer, repo_cfg, "", "abc", partial=False, issue_title="t", issue_number="1"
         )
         self.assertIn("建议标签：crash", text)
         self.assertNotIn("wontfix", text)

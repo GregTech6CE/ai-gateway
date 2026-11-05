@@ -33,7 +33,6 @@ jobs:
       - name: 转发到执行仓库
         env:
           TOKEN: ${{ secrets.LILY_DISPATCH_TOKEN }}
-          TENANT: ${{ vars.LILY_TENANT || 'gt6ce-fork' }}
           DISPATCH_URL: ${{ vars.LILY_BOT_DISPATCH_URL || 'https://api.github.com/repos/Tanimodori/lily-chan-bot/actions/workflows/orchestrator.yml/dispatches' }}
         run: |
           set -euo pipefail
@@ -43,12 +42,11 @@ jobs:
             -H "Accept: application/vnd.github+json" \
             -H "X-GitHub-Api-Version: 2022-11-28" \
             -d "$(jq -n \
-              --arg t "$TENANT" \
               --arg r "${{ github.repository }}" \
               --arg i "${{ github.event.issue.number }}" \
               --arg e "${{ github.event_name }}" \
               --arg c "${{ github.event.comment.id }}" \
-              '{ref:"branch",inputs:{tenant:$t,repo:$r,issue:($i|tostring),event:$e,comment_id:($c // "")}}')")
+              '{ref:"branch",inputs:{repo:$r,issue:($i|tostring),event:$e,comment_id:($c // "")}}')")
           if [ "$code" != "204" ]; then
             echo "dispatch failed: HTTP $code"
             cat /tmp/dispatch.json || true

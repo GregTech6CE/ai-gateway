@@ -80,19 +80,13 @@ def evidence_block(items) -> str:
     return "\n".join(lines) or "未提供。"
 
 
-def marker_for(kind: str, tenant: dict, issue: str, snapshot: str) -> str:
-    return c.marker(
-        kind,
-        repo=tenant["issue_repo"],
-        issue=issue,
-        snapshot=snapshot,
-        tenant=tenant.get("_tenant", ""),
-    )
+def marker_for(kind: str, repo: str, issue: str, snapshot: str) -> str:
+    return c.marker(kind, repo=repo, issue=issue, snapshot=snapshot)
 
 
 def render_answer(
     answer: dict,
-    tenant: dict,
+    repo_cfg: dict,
     run_url: str,
     snapshot: str,
     partial: bool,
@@ -100,13 +94,13 @@ def render_answer(
     issue_number: str = "",
 ) -> str:
     template = (c.ROOT / "templates/comment.md").read_text(encoding="utf-8")
-    issue = str(issue_number or tenant.get("_issue", ""))
+    issue = str(issue_number or repo_cfg.get("_issue", ""))
     title = issue_title.strip() or "未提供标题"
     root = str(answer.get("root_cause") or "").strip()
     notes = str(answer.get("notes") or "").strip()
     hint = str(answer.get("ai_fix_hint") or "").strip()
     versions = "、".join(str(item) for item in answer.get("affected_versions") or []) or "未确定"
-    allowed = {str(item).lower() for item in (tenant.get("triage") or {}).get("write_only", [])}
+    allowed = {str(item).lower() for item in (repo_cfg.get("triage") or {}).get("write_only", [])}
     raw_labels = [
         str(item)
         for item in answer.get("labels") or []
@@ -143,7 +137,7 @@ def render_answer(
             f"🔗 [GitHub Action 运行记录]({run_url})" if run_url else ""
         ),
         "{{marker}}": marker_for(
-            "partial" if partial else "done", tenant, issue, snapshot
+            "partial" if partial else "done", repo_cfg.get("_repo", ""), issue, snapshot
         ),
     }
     text = template
@@ -163,26 +157,26 @@ def render_answer(
 
 def render_markdown(
     markdown: str,
-    tenant: dict,
+    repo_cfg: dict,
     run_url: str,
     snapshot: str,
     reason: str,
     issue_title: str = "",
     issue_number: str = "",
 ) -> str:
-    issue = str(issue_number or tenant.get("_issue", ""))
+    issue = str(issue_number or repo_cfg.get("_issue", ""))
     title = issue_title.strip() or "未提供标题"
     banner = f"> ⚠️ **部分结论**：{reason}，以下为已完成内容。\n\n"
     text = f"# GT6 Issue #{issue} 分析：{title}\n\n" + banner + markdown.strip()
     if run_url:
         text += f"\n\n---\n\n🔗 [GitHub Action 运行记录]({run_url})"
-    text += "\n\n" + marker_for("partial", tenant, issue, snapshot)
+    text += "\n\n" + marker_for("partial", repo_cfg.get("_repo", ""), issue, snapshot)
     return text[:MAX_LENGTH]
 
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--tenant", required=True)
+    parser.add_argument("--repo", required=True)
     parser.add_argument("--issue", required=True)
     parser.add_argument("--issue-title", default="")
     parser.add_argument("--snapshot", required=True)
@@ -194,9 +188,8 @@ def main() -> None:
     parser.add_argument("--out", default="outputs/comment.md")
     args = parser.parse_args()
 
-    tenant = c.load_tenant(args.tenant)
-    tenant["_issue"] = args.issue
-    tenant["_tenant"] = args.tenant
+    repo_cfg = c.load_repo(args.repo)
+    repo_cfg["_issue"] = args.issue
     partial = args.status != "complete"
 
     answer_path = Path(args.answer)
@@ -210,7 +203,7 @@ def main() -> None:
         if data is not None and validate(data) is None:
             text = render_answer(
                 data,
-                tenant,
+                repo_cfg,
                 args.run_url,
                 args.snapshot,
                 False,
@@ -220,7 +213,7 @@ def main() -> None:
         elif markdown_path.exists():
             text = render_markdown(
                 markdown_path.read_text(encoding="utf-8"),
-                tenant,
+                repo_cfg,
                 args.run_url,
                 args.snapshot,
                 "结构化结果无效",
@@ -230,7 +223,7 @@ def main() -> None:
     elif markdown_path.exists():
         text = render_markdown(
             markdown_path.read_text(encoding="utf-8"),
-            tenant,
+            repo_cfg,
             args.run_url,
             args.snapshot,
             args.reason or "分析未完成",
@@ -243,7 +236,7 @@ def main() -> None:
             f"# GT6 Issue #{args.issue} 分析：{args.issue_title or '未提供标题'}\n\n"
             "分析未能完成。可以稍后重新触发，或由维护者手动查看运行记录。\n\n"
             + (f"🔗 [GitHub Action 运行记录]({args.run_url})\n\n" if args.run_url else "")
-            + marker_for("failed", tenant, args.issue, args.snapshot)
+            + marker_for("failed", repo_cfg.get("_repo", ""), args.issue, args.snapshot)
         )
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)
