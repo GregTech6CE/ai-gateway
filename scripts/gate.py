@@ -175,14 +175,20 @@ def triage_issue(issue: dict, body: str) -> list[str]:
         print(f"读取 label 失败: {exc}", file=sys.stderr)
         existing = {}
     to_add: list[str] = []
-    for label in dict.fromkeys(wanted):
+    unique_wanted = list(dict.fromkeys(wanted))
+    for label in unique_wanted:
         if label in allowed and label in existing and label not in current:
             to_add.append(existing[label])
+    unresolved = [
+        label
+        for label in unique_wanted
+        if label not in allowed or (label not in current and label not in existing)
+    ]
     if DRY_RUN:
         return to_add
     if to_add:
         c.request("POST", f"/repos/{REPO}/issues/{ISSUE}/labels", GH_RW, {"labels": to_add})
-    if cfg.get("remove_after_triage", True):
+    if cfg.get("remove_after_triage", True) and wanted and not unresolved:
         for trigger in triggers & set(current):
             name = current[trigger]
             c.request(
