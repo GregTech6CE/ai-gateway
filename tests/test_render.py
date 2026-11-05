@@ -100,6 +100,21 @@ class RenderTest(unittest.TestCase):
         self.assertIn("建议标签：`crash`", text)
         self.assertNotIn("wontfix", text)
 
+    def test_failure_comment_includes_reason_and_link(self):
+        repo_cfg = {"_repo": "Tanimodori/GregTech6", "_issue": "1"}
+        text = render.render_failure(
+            repo_cfg,
+            "https://example/run/1",
+            "abc",
+            "rate 429 after 5 retries",
+            issue_title="测试标题",
+            issue_number="1",
+        )
+        self.assertIn("标题：测试标题 (#1)", text)
+        self.assertIn("分析未能完成（rate 429 after 5 retries）", text)
+        self.assertIn("https://example/run/1", text)
+        self.assertIn("lily:failed", text)
+
     def test_scan_blocks_exact_secret(self):
         hits = scan_out.scan_text("here is abcdefghijk", ["abcdefghijk"])
         self.assertIn("exact-secret", hits)

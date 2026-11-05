@@ -350,6 +350,12 @@ def rate_wait_seconds(error: model_pool.ModelError, cfg: dict) -> int:
     return min(wait, int(cfg.get("rate_limit_max_wait_seconds", 300)))
 
 
+def failure_reason(error: model_pool.ModelError, retries: int) -> str:
+    status = f" {error.status}" if error.status else ""
+    suffix = f" after {retries} retries" if retries else ""
+    return f"{error.kind}{status}{suffix}"
+
+
 def classify_log(text: str) -> model_pool.ModelError | None:
     error_lines = []
     for line in text.splitlines():
@@ -518,6 +524,10 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
         status = "failed"
     if reason != "completed":
         status = "partial" if status in ("complete", "partial") else "failed"
+    elif status == "failed":
+        reason = f"codex exit {code}" if code else "no valid answer"
+    elif status == "partial":
+        reason = "incomplete answer"
     result = {
         "status": status,
         "reason": reason,
@@ -694,6 +704,7 @@ def main() -> None:
                 continue
 
         retries = 0
+        last_error: model_pool.ModelError | None = None
         max_retries = int(pool_cfg.get("rate_limit_retries", 5))
         while True:
             result = run_codex(entry, key, deadline, attempts)
@@ -704,6 +715,7 @@ def main() -> None:
             error = classify_log(read_log())
             if not error:
                 break
+            last_error = error
             log_event(
                 "codex_error",
                 attempt=attempts,
@@ -742,6 +754,8 @@ def main() -> None:
             break
         if result.get("status") == "complete":
             break
+        if last_error:
+            final = {**final, "reason": failure_reason(last_error, retries)}
 
     final["secret_scan"] = scan_outputs()
     write_result(final, state, attempts)
@@ -750,4 +764,24 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as exc:
+        log_event("supervisor_crash", error=f"{type(exc).__name__}: {exc}"[:300])
+        write_result(
+            {
+                "status": "failed",
+                "reason": f"supervisor error: {type(exc).__name__}: {exc}"[:200],
+                "turns": 0,
+                "elapsed_sec": 0,
+                "tokens": 0,
+                "exit_code": -1,
+                "entry_id": "",
+                "secret_scan": scan_outputs(),
+            },
+            {},
+            0,
+        )
+        sys.exit(1)

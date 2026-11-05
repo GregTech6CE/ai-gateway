@@ -141,8 +141,23 @@ def wait_run(b_repo: str, pat: str, run_id: str) -> dict:
         if status == "completed":
             return run
         if time.monotonic() > deadline:
-            raise SystemExit(f"B run {run_id} timeout after {timeout // 60} minutes")
+            print(f"B run {run_id} timeout after {timeout // 60} minutes")
+            return {"status": "timeout", "conclusion": "timed_out"}
         time.sleep(20)
+
+
+def fallback_result(run_id: str, run: dict) -> dict:
+    outcome = run.get("conclusion") or run.get("status") or "unknown"
+    return {
+        "status": "failed",
+        "reason": f"B run {run_id} {outcome}",
+        "turns": 0,
+        "elapsed_sec": 0,
+        "tokens": 0,
+        "exit_code": -1,
+        "entry_id": "",
+        "run_conclusion": outcome,
+    }
 
 
 class StripAuthRedirect(urllib.request.HTTPRedirectHandler):
@@ -188,27 +203,40 @@ def finish() -> None:
         raise SystemExit("B_PAT/RUN_ID missing")
     out = Path(env("OUT_DIR", "."))
     run = wait_run(b_repo, pat, run_id)
-    artifacts = api(
-        "GET",
-        f"/repos/{b_repo}/actions/runs/{run_id}/artifacts?per_page=100",
-        pat,
-    ).get("artifacts", [])
+    try:
+        artifacts = api(
+            "GET",
+            f"/repos/{b_repo}/actions/runs/{run_id}/artifacts?per_page=100",
+            pat,
+        ).get("artifacts", [])
+    except Exception as exc:
+        print(f"list artifacts failed: {exc}", file=sys.stderr)
+        artifacts = []
     found = []
     for artifact in artifacts:
         name = artifact.get("name", "")
-        if name == f"gate-{run_id}":
-            download_artifact(b_repo, pat, artifact, out / "inputs", "inputs")
-            found.append(name)
-        elif name == f"analysis-{run_id}":
-            download_artifact(b_repo, pat, artifact, out / "outputs", "outputs")
-            found.append(name)
+        try:
+            if name == f"gate-{run_id}":
+                download_artifact(b_repo, pat, artifact, out / "inputs", "inputs")
+                found.append(name)
+            elif name == f"analysis-{run_id}":
+                download_artifact(b_repo, pat, artifact, out / "outputs", "outputs")
+                found.append(name)
+        except Exception as exc:
+            print(f"download {name} failed: {exc}", file=sys.stderr)
     verdict_path = out / "inputs/verdict.json"
+    verdict = {}
     if verdict_path.exists():
         try:
             verdict = json.loads(verdict_path.read_text(encoding="utf-8"))
             print(json.dumps({"verdict": verdict}, ensure_ascii=False))
         except Exception:
-            pass
+            verdict = {}
+    result_path = out / "outputs/result.json"
+    if not result_path.exists() and verdict.get("decision") == "proceed":
+        fallback = fallback_result(run_id, run)
+        c.dump_json(result_path, fallback)
+        print(json.dumps({"result_fallback": fallback}, ensure_ascii=False))
     print(
         json.dumps(
             {

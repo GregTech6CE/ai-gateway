@@ -220,6 +220,25 @@ def render_rejection(
     return text[:MAX_LENGTH]
 
 
+def render_failure(
+    repo_cfg: dict,
+    run_url: str,
+    snapshot: str,
+    reason: str = "",
+    issue_title: str = "",
+    issue_number: str = "",
+) -> str:
+    issue = str(issue_number or repo_cfg.get("_issue", ""))
+    title = issue_title.strip() or "未提供标题"
+    detail = f"（{reason.strip()}）" if reason.strip() else ""
+    return (
+        f"## Issue 概要\n\n标题：{title} (#{issue})\n\n"
+        f"分析未能完成{detail}。可以稍后重新触发，或由维护者手动查看运行记录。\n\n"
+        + (f"[GitHub Action 运行记录]({run_url})\n\n" if run_url else "")
+        + marker_for("failed", repo_cfg.get("_repo", ""), issue, snapshot)
+    )
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True)
@@ -294,11 +313,13 @@ def main() -> None:
         )
 
     if not text:
-        text = (
-            f"## Issue 概要\n\n标题：{args.issue_title or '未提供标题'} (#{args.issue})\n\n"
-            "分析未能完成。可以稍后重新触发，或由维护者手动查看运行记录。\n\n"
-            + (f"[GitHub Action 运行记录]({args.run_url})\n\n" if args.run_url else "")
-            + marker_for("failed", repo_cfg.get("_repo", ""), args.issue, args.snapshot)
+        text = render_failure(
+            repo_cfg,
+            args.run_url,
+            args.snapshot,
+            args.reason,
+            issue_title=args.issue_title,
+            issue_number=args.issue,
         )
 
     Path(args.out).parent.mkdir(parents=True, exist_ok=True)

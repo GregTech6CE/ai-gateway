@@ -78,9 +78,15 @@ def apply_triage(issue: dict) -> None:
 
 def post(body: str) -> None:
     if COMMENT_ID:
-        c.request("PATCH", f"/repos/{REPO}/issues/comments/{COMMENT_ID}", GH_RW, {"body": body})
-    else:
-        c.request("POST", f"/repos/{REPO}/issues/{ISSUE}/comments", GH_RW, {"body": body})
+        try:
+            c.request("PATCH", f"/repos/{REPO}/issues/comments/{COMMENT_ID}", GH_RW, {"body": body})
+            return
+        except RuntimeError as exc:
+            message = str(exc)
+            if "-> 404:" not in message and "-> 410:" not in message:
+                raise
+            print("placeholder comment missing; posting a new comment", file=sys.stderr)
+    c.request("POST", f"/repos/{REPO}/issues/{ISSUE}/comments", GH_RW, {"body": body})
 
 
 def stopped(reason: str) -> None:
@@ -129,8 +135,10 @@ def main() -> None:
     if COMMENT.exists():
         text = COMMENT.read_text(encoding="utf-8")
     else:
+        reason = str(result.get("reason") or "").strip()
+        detail = f"（{reason}）" if reason and reason != "result missing" else ""
         text = (
-            "分析未能完成。可以稍后重新触发，或由维护者手动查看运行记录。\n\n"
+            f"分析未能完成{detail}。可以稍后重新触发，或由维护者手动查看运行记录。\n\n"
             + (f"[运行记录]({RUN_URL})\n\n" if RUN_URL else "")
             + c.marker("failed", repo=REPO, issue=ISSUE, snapshot=SNAPSHOT)
         )

@@ -48,6 +48,11 @@ class SupervisorRetryTest(unittest.TestCase):
         self.assertEqual(item["status"], "ok")
         self.assertNotIn("until", item)
 
+    def test_failure_reason_mentions_rate_and_retries(self):
+        error = supervisor.model_pool.ModelError("rate", 429, 0, "")
+        self.assertEqual(supervisor.failure_reason(error, 5), "rate 429 after 5 retries")
+        self.assertEqual(supervisor.failure_reason(error, 0), "rate 429")
+
 
 if __name__ == "__main__":
     unittest.main()
