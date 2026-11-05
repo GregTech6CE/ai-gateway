@@ -84,7 +84,7 @@
 }
 ```
 
-- `labels` 只能从以下集合选择：`crash`、`parity`、`translation`、`needs info`、
+- `labels` 只能从以下集合选择：`bug`、`crash`、`parity`、`translation`、`needs info`、
   `needs triage`、`1.20.1`、`1.21.1`。
 - 结论用中文；代码标识符与日志原文保持原样。
 - 证据最多 40 条，每条都要能被维护者复核。

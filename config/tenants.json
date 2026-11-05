@@ -7,33 +7,41 @@
       "code_ref_mode": "tag",
       "tag_template": "v{version}",
       "fallback_ref": "master",
-      "sparse_checkout": [
-        "core/src/main/java/gregtech",
-        "core/src/main/resources/assets/gt6ce/lang",
-        "core/src/main/resources/assets/gt6ce"
-      ],
       "app_key_env": "LILY_APP_PRIVATE_KEY",
       "app_client_id_env": "LILY_APP_CLIENT_ID",
       "bot_login": "lily-chan-bot[bot]",
       "bot_mention": "@lily-chan-bot",
       "comment_language": "zh",
       "attach_run_link": true,
-      "labels_allowlist": [
-        "crash",
-        "parity",
-        "translation",
-        "needs info",
-        "needs triage",
-        "1.20.1",
-        "1.21.1"
-      ],
       "reject": {
         "only": [
           "spam"
         ],
         "min_confidence": 0.9
       },
-      "model_pool": "shared"
+      "model_pool": "shared",
+      "extra_code_refs": [],
+      "triage": {
+        "process_only": [
+          [
+            "bug"
+          ]
+        ],
+        "write_only": [
+          "bug",
+          "crash",
+          "parity",
+          "translation",
+          "needs info",
+          "1.20.1",
+          "1.21.1",
+          "needs triage"
+        ],
+        "triage_labels": [
+          "needs triage"
+        ],
+        "remove_after_triage": true
+      }
     },
     "gt6ce-org": {
       "enabled": false,
@@ -42,33 +50,41 @@
       "code_ref_mode": "tag",
       "tag_template": "v{version}",
       "fallback_ref": "master",
-      "sparse_checkout": [
-        "core/src/main/java/gregtech",
-        "core/src/main/resources/assets/gt6ce/lang",
-        "core/src/main/resources/assets/gt6ce"
-      ],
       "app_key_env": "GT6CE_APP_PRIVATE_KEY",
       "app_client_id_env": "GT6CE_APP_CLIENT_ID",
       "bot_login": "gt6ce-bot[bot]",
       "bot_mention": "@gt6ce-bot",
       "comment_language": "zh",
       "attach_run_link": true,
-      "labels_allowlist": [
-        "crash",
-        "parity",
-        "translation",
-        "needs info",
-        "needs triage",
-        "1.20.1",
-        "1.21.1"
-      ],
       "reject": {
         "only": [
           "spam"
         ],
         "min_confidence": 0.9
       },
-      "model_pool": "shared"
+      "model_pool": "shared",
+      "extra_code_refs": [],
+      "triage": {
+        "process_only": [
+          [
+            "bug"
+          ]
+        ],
+        "write_only": [
+          "bug",
+          "crash",
+          "parity",
+          "translation",
+          "needs info",
+          "1.20.1",
+          "1.21.1",
+          "needs triage"
+        ],
+        "triage_labels": [
+          "needs triage"
+        ],
+        "remove_after_triage": true
+      }
     }
   }
 }

@@ -90,19 +90,6 @@ def main() -> None:
 
     model_pool.merge_health(SELF_TOKEN, B_REPO, OUTPUTS / "model_health.json")
 
-    answer_path = OUTPUTS / "answer.json"
-    if answer_path.exists() and result.get("status") == "complete":
-        try:
-            answer = json.loads(answer_path.read_text(encoding="utf-8"))
-            allowed = set(tenant.get("labels_allowlist", []))
-            labels = [label for label in answer.get("labels", []) if label in allowed]
-            if labels:
-                c.request(
-                    "POST", f"/repos/{REPO}/issues/{ISSUE}/labels", GH_RW, {"labels": labels}
-                )
-        except Exception as exc:
-            print(f"label update skipped: {exc}", file=sys.stderr)
-
 
 if __name__ == "__main__":
     main()

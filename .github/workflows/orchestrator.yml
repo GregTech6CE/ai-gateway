@@ -50,7 +50,7 @@ jobs:
       snapshot_hash: ${{ steps.gate.outputs.snapshot_hash }}
       code_repo: ${{ steps.gate.outputs.code_repo }}
       code_ref: ${{ steps.gate.outputs.code_ref }}
-      sparse: ${{ steps.gate.outputs.sparse }}
+      code_refs: ${{ steps.gate.outputs.code_refs }}
       issue_title: ${{ steps.gate.outputs.issue_title }}
     steps:
       - uses: actions/checkout@v4
@@ -120,19 +120,40 @@ jobs:
           private-key: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LILY_APP_PRIVATE_KEY || secrets.GT6CE_APP_PRIVATE_KEY }}
           permission-issues: read
           permission-contents: read
-      - name: Checkout analysed code
-        uses: actions/checkout@v4
+      - name: Restore GT6 mirror
+        uses: actions/cache/restore@v4
         with:
-          repository: ${{ needs.gate.outputs.code_repo }}
-          ref: ${{ needs.gate.outputs.code_ref }}
-          path: code
-          fetch-depth: 1
-      - name: Sparse checkout
-        if: needs.gate.outputs.sparse != ''
+          path: .cache/gt6.git
+          key: gt6-mirror-${{ github.run_id }}
+          restore-keys: gt6-mirror-
+      - name: Sync mirror and create worktrees
+        env:
+          CODE_REPO: ${{ needs.gate.outputs.code_repo }}
+          CODE_REFS: ${{ needs.gate.outputs.code_refs }}
         run: |
-          cd code
-          git sparse-checkout init --cone
-          git sparse-checkout set ${{ needs.gate.outputs.sparse }}
+          set -euo pipefail
+          mkdir -p .cache
+          if [ -d .cache/gt6.git ]; then
+            git -C .cache/gt6.git fetch --prune --tags
+          else
+            git clone --mirror "https://github.com/$CODE_REPO.git" .cache/gt6.git
+          fi
+          mkdir -p code
+          primary=""
+          for ref in $CODE_REFS; do
+            slug=$(printf '%s' "$ref" | tr '/ ' '__')
+            git -C .cache/gt6.git worktree add -f "code/$slug" "$ref" || \
+              git -C .cache/gt6.git worktree add -f "code/$slug" master
+            if [ -z "$primary" ]; then primary="$slug"; fi
+          done
+          ln -sfn "$primary" code/current
+      - name: Save GT6 mirror
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/gt6.git
+          key: gt6-mirror-${{ github.run_id }}
       - name: Install Codex CLI (pin before production)
         run: npm install -g @openai/codex@0.166.0
       - name: Prefetch attachments

@@ -71,6 +71,27 @@ environment 只负责暂停 analysis job；LLM key 仍然是 repo secret。
 - 健康状态存在 B 的 repo variable `MODEL_HEALTH`；gate 读取并更新，write-back 合并。
 - 重置：`gh variable set MODEL_HEALTH --repo Tanimodori/lily-chan-bot --body '{}'`。
 
+## 分诊与标签
+
+- `process_only` 是 OR-AND 组：`[["bug"]]` 表示带 bug；`[["bug"],["crash","1.21.1"]]`
+  表示 bug 或（crash 且 1.21.1）。
+- 仅当 issue 带有 `needs triage` 时执行分诊：按表单类型/版本确定
+  `crash` / `parity` / `translation` / `1.20.1` / `1.21.1`，只添加 `write_only`
+  白名单且仓库中已存在的标签，然后移除 `needs triage`。
+- 不创建新标签；缺失的标签直接跳过。
+- `write_only` 同时是评论「建议标签」的输出白名单；白名单外的标签不会出现在评论里。
+- 没有 `needs triage` 时不做任何标签写入。
+
+## 代码检出
+
+- `code/current` 指向按 issue 版本解析的 ref；`code/<ref>` 是额外版本。
+- 使用 bare mirror（`.cache/gt6.git`）+ `git worktree`；mirror 通过 `actions/cache`
+  跨 run 复用（仓库约 20 MB）。
+- 多版本：在 tenant 的 `extra_code_refs` 里列出额外 tag，例如 `["v1.0.4"]`；
+  每个 ref 一个 worktree。
+- 不再使用 `sparse_checkout`；旧的窄路径会漏掉 `api/`、`core/src/main/resources/data`、
+  `build.gradle` 等。
+
 ## 配置约定
 
 - `config/*.json` 只放数据：仓库名、模型 id、变量名、角色绑定；不放设计说明、警告或准则。

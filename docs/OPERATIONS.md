@@ -47,6 +47,19 @@
 | 评论显示 blocked | `scan_out` 命中；查看 analysis artifact |
 | 超时/partial | `outputs/result.json`；partial 是预期行为 |
 
+## 分诊
+
+- 只有 issue 带 `needs triage` 时才分诊；不改变分析/评论流程。
+- 标签来自表单类型/版本，只写 `write_only` 白名单中且仓库已存在的标签；不创建新标签。
+- 分诊成功后移除 `needs triage`；失败/标签缺失时保留。
+- `process_only` 是 OR-AND 组；当前为 `[["bug"]]`。
+
+## 代码检出
+
+- bare mirror 缓存在 `.cache/gt6.git`，worktree 建在 `code/<ref>`，`code/current` 是主版本。
+- 多版本通过 tenant 的 `extra_code_refs` 增加；每个 ref 独立 worktree。
+- mirror 由 `actions/cache` 恢复/保存；首次约 20 MB，后续 fetch 增量。
+
 ## 模型池
 
 - endpoint 是健康单位；role 只是 preflight/analysis 的绑定，down 只记在 endpoint 上。

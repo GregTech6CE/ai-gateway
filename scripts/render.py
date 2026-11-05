@@ -106,7 +106,13 @@ def render_answer(
     notes = str(answer.get("notes") or "").strip()
     hint = str(answer.get("ai_fix_hint") or "").strip()
     versions = "、".join(str(item) for item in answer.get("affected_versions") or []) or "未确定"
-    labels = ", ".join(str(item) for item in answer.get("labels") or []) or "无"
+    allowed = {str(item).lower() for item in (tenant.get("triage") or {}).get("write_only", [])}
+    raw_labels = [
+        str(item)
+        for item in answer.get("labels") or []
+        if not allowed or str(item).lower() in allowed
+    ]
+    labels = ", ".join(raw_labels) or "无"
     values = {
         "{{issue_number}}": issue,
         "{{issue_title}}": title,

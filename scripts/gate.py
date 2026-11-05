@@ -137,6 +137,62 @@ def l1_classify(title: str, body: str) -> tuple[dict, dict | None]:
         return {"relevance": "in_scope", "confidence": 0.0, "reason_code": f"l1-{exc.kind}"}, None
 
 
+def triage_issue(issue: dict, body: str) -> list[str]:
+    cfg = tenant.get("triage", {})
+    triggers = {str(item).lower() for item in cfg.get("triage_labels", [])}
+    current = {
+        str(label.get("name", "")).lower(): str(label.get("name", ""))
+        for label in issue.get("labels", [])
+    }
+    if not (triggers & set(current)):
+        return []
+    kind = c.form_field(body, "分类 / Type", "分类", "Type").lower()
+    wanted: list[str] = []
+    if "崩溃" in kind or "crash" in kind:
+        wanted.append("crash")
+    elif "原版差异" in kind or "parity" in kind:
+        wanted.append("parity")
+    elif "翻译" in kind or "translation" in kind:
+        wanted.append("translation")
+    elif "缺陷" in kind or "bug" in kind:
+        wanted.append("bug")
+    loader = c.form_field(
+        body, "游戏版本 / Minecraft Version", "游戏版本", "Minecraft Version"
+    ).lower()
+    if "1.21.1" in loader:
+        wanted.append("1.21.1")
+    if "1.20.1" in loader:
+        wanted.append("1.20.1")
+
+    allowed = {str(item).lower() for item in cfg.get("write_only", [])}
+    try:
+        existing_labels = c.paginate(f"/repos/{REPO}/labels", GH_RO, max_pages=2)
+        existing = {
+            str(item.get("name", "")).lower(): str(item.get("name", ""))
+            for item in existing_labels
+        }
+    except Exception as exc:
+        print(f"读取 label 失败: {exc}", file=sys.stderr)
+        existing = {}
+    to_add: list[str] = []
+    for label in dict.fromkeys(wanted):
+        if label in allowed and label in existing and label not in current:
+            to_add.append(existing[label])
+    if DRY_RUN:
+        return to_add
+    if to_add:
+        c.request("POST", f"/repos/{REPO}/issues/{ISSUE}/labels", GH_RW, {"labels": to_add})
+    if cfg.get("remove_after_triage", True):
+        for trigger in triggers & set(current):
+            name = current[trigger]
+            c.request(
+                "DELETE",
+                f"/repos/{REPO}/issues/{ISSUE}/labels/{urllib.parse.quote(name, safe='')}",
+                GH_RW,
+            )
+    return to_add
+
+
 def main() -> None:
     if BOT_ENABLED == "false":
         finish("skip", "BOT_ENABLED=false")
@@ -160,6 +216,15 @@ def main() -> None:
         finish("skip", "pull request, not an issue")
     if issue.get("state") != "open":
         finish("skip", "issue is not open")
+
+    triage_cfg = tenant.get("triage", {})
+    groups = triage_cfg.get("process_only") or []
+    if groups:
+        groups = [group if isinstance(group, list) else [group] for group in groups]
+        issue_labels = {str(label.get("name", "")).lower() for label in issue.get("labels", [])}
+        matched = any(all(str(item).lower() in issue_labels for item in group) for group in groups)
+        if not matched:
+            finish("skip", "process_only not matched")
 
     association = issue.get("author_association", "")
     if EVENT == "issue_comment":
@@ -232,6 +297,7 @@ def main() -> None:
             finish("skip", "global daily quota reached")
 
     body = issue.get("body") or ""
+    triaged = triage_issue(issue, body)
     texts = "\n".join([body] + [(item.get("body") or "") for item in comments])
     attachments = c.attachments(texts)
     snapshot = {
@@ -282,6 +348,13 @@ def main() -> None:
         },
     )
 
+    refs = [snapshot["code_ref"]]
+    for extra in tenant.get("extra_code_refs", []) or []:
+        extra = str(extra).strip()
+        if extra and extra not in refs:
+            refs.append(extra)
+    code_refs = " ".join(refs)
+
     relevance = str(verdict.get("relevance", "in_scope")).lower()
     try:
         confidence = float(verdict.get("confidence", 0))
@@ -309,7 +382,7 @@ def main() -> None:
             snapshot_hash=snapshot["sha256"],
             code_ref=snapshot["code_ref"],
             code_repo=snapshot["code_repo"],
-            sparse=" ".join(tenant.get("sparse_checkout", [])),
+            code_refs=code_refs,
             issue_title=issue.get("title", ""),
         )
 
@@ -319,8 +392,9 @@ def main() -> None:
         "🤖 **已受理，等待维护者批准**\n\n"
         f"- 类型：{kind or '未填写'}\n"
         f"- 版本：{version or '未填写'}\n"
-        f"- 附件：{len(attachments)} 个\n\n"
-        "批准后开始分析；不需要时可以忽略本次请求。"
+        f"- 附件：{len(attachments)} 个\n"
+        + (f"- 已分诊：{', '.join(triaged)}\n" if triaged else "")
+        + "\n批准后开始分析；不需要时可以忽略本次请求。"
     )
     summary += "\n\n" + c.marker(
         "requested",
@@ -341,7 +415,7 @@ def main() -> None:
         snapshot_hash=snapshot["sha256"],
         code_ref=snapshot["code_ref"],
         code_repo=snapshot["code_repo"],
-        sparse=" ".join(tenant.get("sparse_checkout", [])),
+        code_refs=code_refs,
         issue_title=issue.get("title", ""),
         l1=json.dumps(verdict, ensure_ascii=False),
     )

@@ -57,6 +57,22 @@ class RenderTest(unittest.TestCase):
         broken.pop("issue_summary")
         self.assertIn("missing issue_summary", render.validate(broken))
 
+
+    def test_labels_filtered_by_write_only(self):
+        answer = json.loads((ROOT / "tests/fixtures/answer.sample.json").read_text(encoding="utf-8"))
+        answer["labels"] = ["crash", "wontfix"]
+        tenant = {
+            "issue_repo": "Tanimodori/GregTech6",
+            "_issue": "1",
+            "_tenant": "gt6ce-fork",
+            "triage": {"write_only": ["crash"]},
+        }
+        text = render.render_answer(
+            answer, tenant, "", "abc", partial=False, issue_title="t", issue_number="1"
+        )
+        self.assertIn("建议标签：crash", text)
+        self.assertNotIn("wontfix", text)
+
     def test_scan_blocks_exact_secret(self):
         hits = scan_out.scan_text("here is abcdefghijk", ["abcdefghijk"])
         self.assertIn("exact-secret", hits)
