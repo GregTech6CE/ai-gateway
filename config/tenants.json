@@ -1,4 +1,5 @@
 {
+  "_warning": "本文件只允许填写仓库名、模型 id、secret/env 变量名与标签名；禁止填写任何密钥或真实凭据。",
   "tenants": {
     "gt6ce-fork": {
       "enabled": true,

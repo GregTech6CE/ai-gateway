@@ -8,7 +8,8 @@
 4. 创建 fine-grained PAT（仅本仓库 `Actions: write`），存为 fork 的 `LILY_DISPATCH_TOKEN`。
    这是 A 侧唯一的凭据。
 5. 存 `LLM_KEY_GT6CE_FORK`；设置 `LLM_BASE_URL`。
-6. 从模板创建 `config/tenants.json`（本仓库已提交公开配置）。
+6. 检查已提交的 `config/tenants.json`：只允许修改仓库名、模型 id 和 secret/env
+   名称；**禁止填写任何值**。
 7. 创建 `llm` environment，Required reviewers = owner。
 8. 设置 `BOT_ENABLED=true`。
 9. 在 fork 重建上游 label：`crash`、`parity`、`translation`、`needs info`、

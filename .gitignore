@@ -1,8 +1,13 @@
 .cache/
 .codex/
 .env
+.env.*
 *.pem
 *.key
+*.p12
+*.pfx
+*.jks
+id_rsa*
 node_modules/
 inputs/
 outputs/
