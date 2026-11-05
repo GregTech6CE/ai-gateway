@@ -14,6 +14,11 @@
 8. 设置 `BOT_ENABLED=true`。
 9. 在 fork 重建上游 label：`crash`、`parity`、`translation`、`needs info`、
    `needs triage`、`1.20.1`、`1.21.1`。
+10. 把 `templates/trigger.yml` 复制到 fork 的 `.github/workflows/lily-trigger.yml`。
+11. 在 fork 设置以下变量（都不是秘密）：
+    - `LILY_TENANT=gt6ce-fork`
+    - `LILY_BOT_MENTION=@lily-chan-bot`（可省略，模板有默认值）
+    - `LILY_BOT_DISPATCH_URL`（可省略，模板有默认值）
 
 ## 阶段二
 

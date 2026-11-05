@@ -73,6 +73,7 @@ gh workflow run orchestrator.yml \
 
 - 加 `-f dry_run=true`：跑 gate 与 analysis、上传 artifact，但不发任何评论，用于阶段一验收。
 - `rerun.yml` 仅管理员可触发，接受自由 prompt，不经过 L0/L1，A 侧无法调用。
+- A 侧触发文件位于 `templates/trigger.yml`；复制到 A 的 `.github/workflows/lily-trigger.yml`。
 
 ## 安全不变量
 

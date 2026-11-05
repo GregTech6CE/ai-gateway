@@ -1,0 +1,57 @@
+name: lily trigger
+
+# 把 issue 事件转发到执行仓库。此文件应放在 A（issue 仓库）的
+# .github/workflows/ 下，不要放在执行仓库的 workflows 目录里。
+
+on:
+  issues:
+    types: [opened]
+  issue_comment:
+    types: [created]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: lily-trigger-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    if: |
+      (github.event_name == 'issues' &&
+       github.event.issue.user.type != 'Bot') ||
+      (github.event_name == 'issue_comment' &&
+       github.event.comment.user.type != 'Bot' &&
+       contains(github.event.comment.body, vars.LILY_BOT_MENTION || '@lily-chan-bot') &&
+       (github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: 转发到执行仓库
+        env:
+          TOKEN: ${{ secrets.LILY_DISPATCH_TOKEN }}
+          TENANT: ${{ vars.LILY_TENANT || 'gt6ce-fork' }}
+          DISPATCH_URL: ${{ vars.LILY_BOT_DISPATCH_URL || 'https://api.github.com/repos/Tanimodori/lily-chan-bot/actions/workflows/orchestrator.yml/dispatches' }}
+        run: |
+          set -euo pipefail
+          code=$(curl -sS -o /tmp/dispatch.json -w '%{http_code}' \
+            -X POST "$DISPATCH_URL" \
+            -H "Authorization: Bearer $TOKEN" \
+            -H "Accept: application/vnd.github+json" \
+            -H "X-GitHub-Api-Version: 2022-11-28" \
+            -d "$(jq -n \
+              --arg t "$TENANT" \
+              --arg r "${{ github.repository }}" \
+              --arg i "${{ github.event.issue.number }}" \
+              --arg e "${{ github.event_name }}" \
+              --arg c "${{ github.event.comment.id }}" \
+              '{ref:"main",inputs:{tenant:$t,repo:$r,issue:($i|tostring),event:$e,comment_id:($c // "")}}')")
+          if [ "$code" != "204" ]; then
+            echo "dispatch failed: HTTP $code"
+            cat /tmp/dispatch.json || true
+            exit 1
+          fi
+          echo "dispatched"
