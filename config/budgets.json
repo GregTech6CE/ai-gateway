@@ -29,7 +29,10 @@
       "strike_window_hours": 24,
       "strike_disable_minutes": 60,
       "analysis_probe_max_tokens": 8,
-      "analysis_retry_once": true
+      "rate_limit_retries": 2,
+      "rate_limit_wait_seconds": 60,
+      "rate_limit_min_wait_seconds": 5,
+      "rate_limit_max_wait_seconds": 300
     }
   }
 }

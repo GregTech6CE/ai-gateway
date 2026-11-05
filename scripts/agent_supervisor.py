@@ -64,6 +64,10 @@ def format_event(event: str, fields: dict) -> str:
         return f"probe 重试成功：entry={fields.get('entry')}"
     if event == "probe_retry_error":
         return f"probe 重试失败：entry={fields.get('entry')} kind={fields.get('kind')} status={fields.get('status')}"
+    if event == "codex_retry":
+        return f"Codex {fields.get('kind')} 等待重试：attempt={fields.get('attempt')} entry={fields.get('entry')} retry={fields.get('retry')}/{fields.get('max_retries')} wait={fields.get('wait_sec')}s"
+    if event == "codex_retry_skip":
+        return f"Codex {fields.get('kind')} 跳过重试：attempt={fields.get('attempt')} entry={fields.get('entry')} wait={fields.get('wait_sec')}s remaining={fields.get('remaining_sec')}s"
     if event == "attempt_start":
         return f"开始 Codex：attempt={fields.get('attempt')} model={fields.get('model')} context={fields.get('context')} effort={fields.get('effort')} wire_api={fields.get('wire_api')} timeout={fields.get('timeout_minutes')}min"
     if event == "codex_start":
@@ -324,6 +328,28 @@ def parse_tokens(text: str) -> int:
     return 0
 
 
+def parse_retry_after(text: str) -> int:
+    patterns = (
+        r"retry[-_ ]?after[\"']?\s*[:=]\s*(\d+)",
+        r"(?:try again|retry) in\s+(\d+)\s*(?:s|sec|seconds?)",
+        r"after\s+(\d+)\s*(?:s|sec|seconds?)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, re.I)
+        if match:
+            try:
+                return int(match.group(1))
+            except ValueError:
+                pass
+    return 0
+
+
+def rate_wait_seconds(error: model_pool.ModelError, cfg: dict) -> int:
+    wait = int(error.retry_after or cfg.get("rate_limit_wait_seconds", 60))
+    wait = max(wait, int(cfg.get("rate_limit_min_wait_seconds", 5)))
+    return min(wait, int(cfg.get("rate_limit_max_wait_seconds", 300)))
+
+
 def classify_log(text: str) -> model_pool.ModelError | None:
     error_lines = []
     for line in text.splitlines():
@@ -339,9 +365,14 @@ def classify_log(text: str) -> model_pool.ModelError | None:
     if "401" in joined or "unauthorized" in joined or "invalid api key" in joined:
         return model_pool.ModelError("auth", 401, 0, "codex log")
     if "429" in joined or "rate limit" in joined or "too many requests" in joined:
-        return model_pool.ModelError("rate", 429, 0, "codex log")
+        return model_pool.ModelError("rate", 429, parse_retry_after(text), "codex log")
     if "404" in joined or "model not found" in joined or "does not exist" in joined:
         return model_pool.ModelError("config", 404, 0, "codex log")
+    if any(
+        marker in joined
+        for marker in ("timeout", "timed out", "connection reset", "connection refused", "http 5", " 500", " 502", " 503", " 504")
+    ):
+        return model_pool.ModelError("upstream", 0, parse_retry_after(text), "codex log")
     return None
 
 
@@ -563,6 +594,11 @@ def main() -> None:
         write_result({"status": "failed", "reason": "no healthy L2 entry"}, {"endpoints": {}}, 0)
         sys.exit(1)
 
+    log_event(
+        "selected_entry",
+        entry=entries[0]["id"],
+        candidates=[item.get("id") for item in entries],
+    )
     deadline = time.monotonic() + int(budget["l2"]["timeout_minutes"]) * 60
     state: dict = model_pool.read_health_file(c.ROOT / "inputs/model_health.json")
     attempts = 0
@@ -605,7 +641,8 @@ def main() -> None:
             )
             return
 
-    for entry in entries:
+    # 本轮锁定第一个候选 endpoint，不跨 endpoint 切换。
+    for entry in entries[:1]:
         key = model_pool.key_for(entry)
         if not key:
             log_event("missing_api_key", entry=entry["id"], api_key_env=entry.get("api_key_env"))
@@ -656,13 +693,17 @@ def main() -> None:
                 final = {**final, "reason": f"probe: {exc.kind}", "entry_id": entry["id"]}
                 continue
 
-        result = run_codex(entry, key, deadline, attempts)
-        final = result
-        if result["status"] == "complete":
-            model_pool.mark_success(state, entry)
-            break
-        error = classify_log(read_log())
-        if error:
+        retries = 0
+        max_retries = int(pool_cfg.get("rate_limit_retries", 2))
+        while True:
+            result = run_codex(entry, key, deadline, attempts)
+            final = result
+            if result["status"] == "complete":
+                model_pool.mark_success(state, entry)
+                break
+            error = classify_log(read_log())
+            if not error:
+                break
             log_event(
                 "codex_error",
                 attempt=attempts,
@@ -671,12 +712,36 @@ def main() -> None:
                 status=error.status,
             )
             model_pool.mark_failure(state, entry, error, pool_cfg)
-            if not bool(pool_cfg.get("analysis_retry_once", True)):
-                break
-            if time.monotonic() > deadline - 300:
-                break
-            continue
-        break
+            if error.kind in ("rate", "upstream", "network") and retries < max_retries:
+                wait = rate_wait_seconds(error, pool_cfg)
+                remaining = deadline - time.monotonic()
+                if remaining > wait + 120:
+                    retries += 1
+                    log_event(
+                        "codex_retry",
+                        attempt=attempts,
+                        entry=entry["id"],
+                        kind=error.kind,
+                        retry=retries,
+                        max_retries=max_retries,
+                        wait_sec=wait,
+                    )
+                    time.sleep(wait)
+                    attempts += 1
+                    archive_attempt(attempts)
+                    log_event("attempt_archive", attempt=attempts, entry=entry["id"])
+                    continue
+                log_event(
+                    "codex_retry_skip",
+                    attempt=attempts,
+                    entry=entry["id"],
+                    kind=error.kind,
+                    wait_sec=wait,
+                    remaining_sec=round(remaining),
+                )
+            break
+        if result.get("status") == "complete":
+            break
 
     final["secret_scan"] = scan_outputs()
     write_result(final, state, attempts)
