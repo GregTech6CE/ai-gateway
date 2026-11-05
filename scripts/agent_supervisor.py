@@ -694,7 +694,7 @@ def main() -> None:
                 continue
 
         retries = 0
-        max_retries = int(pool_cfg.get("rate_limit_retries", 2))
+        max_retries = int(pool_cfg.get("rate_limit_retries", 5))
         while True:
             result = run_codex(entry, key, deadline, attempts)
             final = result

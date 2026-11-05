@@ -36,6 +36,18 @@ class SupervisorRetryTest(unittest.TestCase):
         self.assertIsNotNone(error)
         self.assertEqual(error.kind, "upstream")
 
+    def test_success_resets_health_failures(self):
+        state = {"endpoints": {}}
+        entry = {"id": "mistral-deepseek"}
+        error = supervisor.model_pool.ModelError("rate", 429, 0, "")
+        supervisor.model_pool.mark_failure(state, entry, error, {})
+        self.assertGreaterEqual(state["endpoints"]["mistral-deepseek"]["failures"], 1)
+        supervisor.model_pool.mark_success(state, entry)
+        item = state["endpoints"]["mistral-deepseek"]
+        self.assertEqual(item["failures"], 0)
+        self.assertEqual(item["status"], "ok")
+        self.assertNotIn("until", item)
+
 
 if __name__ == "__main__":
     unittest.main()
