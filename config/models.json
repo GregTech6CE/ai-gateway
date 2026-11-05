@@ -1,5 +1,4 @@
 {
-  "_warning": "模型池配置。endpoint 是健康单位；role 只是绑定。只允许写名称，禁止写任何密钥。",
   "pools": {
     "shared": {
       "endpoints": [

@@ -30,6 +30,5 @@
       "analysis_probe_max_tokens": 8,
       "analysis_retry_once": true
     }
-  },
-  "_note": "l1/l2 是流水线阶段预算；模型池角色键是 preflight/analysis。"
+  }
 }

@@ -62,6 +62,12 @@ environment 只负责暂停 analysis job；LLM key 仍然是 repo secret。
 - 健康状态存在 B 的 repo variable `MODEL_HEALTH`；gate 读取并更新，write-back 合并。
 - 重置：`gh variable set MODEL_HEALTH --repo Tanimodori/lily-chan-bot --body '{}'`。
 
+## 配置约定
+
+- `config/*.json` 只放数据：仓库名、模型 id、变量名、角色绑定；不放设计说明、警告或准则。
+- 设计准则写在 README、`docs/OPERATIONS.md` 与根目录 `AGENTS.md`。
+- `config/budgets.json` 的 `l1` / `l2` 是流水线阶段预算；模型池角色键是 `preflight` / `analysis`。
+
 ## 本地配置
 
 `config/tenants.json` 已提交，**不含密钥**（只有仓库名、模型 id 和 secret/env 的**名称**）。

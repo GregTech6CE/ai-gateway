@@ -50,6 +50,7 @@
 ## 模型池
 
 - endpoint 是健康单位；role 只是 preflight/analysis 的绑定，down 只记在 endpoint 上。
+- `config/budgets.json` 的 `l1` / `l2` 是阶段预算，不是模型池角色。
 - 401/403：冷却 15 分钟；同一 endpoint 24 小时内失败 3 次则熔断 60 分钟。
 - 429：按 `Retry-After` 冷却，上限 30 分钟；5xx：5 分钟；400/404：60 分钟。
 - 重置健康状态：`gh variable set MODEL_HEALTH --repo Tanimodori/lily-chan-bot --body '{}'`。
