@@ -10,7 +10,7 @@ import signal
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -36,13 +36,70 @@ RESULT_PATH = OUTPUTS / "result.json"
 HEALTH_PATH = OUTPUTS / "model_health.json"
 RELEVANCE_PATH = OUTPUTS / "relevance.json"
 SUPERVISOR_LOG = OUTPUTS / "supervisor.log"
-CODEX_TEXT = OUTPUTS / "codex_text.log"
 REQUIRED = ("issue_type", "conclusion", "confidence", "evidence", "fix_plan", "labels", "partial")
+CST = timezone(timedelta(hours=8))
 
 
-def log_event(event: str, **fields) -> None:
-    record = {"ts": datetime.now(timezone.utc).isoformat(), "event": event, **fields}
-    line = json.dumps(record, ensure_ascii=False)
+def one_line(value) -> str:
+    return " ".join(str(value or "").split())
+
+
+def format_event(event: str, fields: dict) -> str:
+    if event == "exec":
+        return one_line(fields.get("command", ""))
+    if event == "supervisor_start":
+        return f"开始 supervisor：repo={fields.get('repo')} issue={fields.get('issue')} bot_enabled={fields.get('bot_enabled')} repo_enabled={fields.get('repo_enabled')}"
+    if event == "analysis_entries":
+        entries = ",".join(str(x) for x in (fields.get("entries") or []))
+        return f"可用分析入口：pool={fields.get('pool')} count={fields.get('count')} entries={entries}"
+    if event == "attempt_archive":
+        return f"开始 attempt {fields.get('attempt')}：entry={fields.get('entry')}"
+    if event == "probe_ok":
+        return f"probe 成功：entry={fields.get('entry')} 耗时={fields.get('elapsed_ms')}ms"
+    if event == "probe_error":
+        return f"probe 失败：entry={fields.get('entry')} kind={fields.get('kind')} status={fields.get('status')}"
+    if event == "probe_retry":
+        return f"probe 重试：{fields.get('wait_sec')}s 后，kind={fields.get('kind')}"
+    if event == "probe_retry_ok":
+        return f"probe 重试成功：entry={fields.get('entry')}"
+    if event == "probe_retry_error":
+        return f"probe 重试失败：entry={fields.get('entry')} kind={fields.get('kind')} status={fields.get('status')}"
+    if event == "attempt_start":
+        return f"开始 Codex：attempt={fields.get('attempt')} model={fields.get('model')} context={fields.get('context')} effort={fields.get('effort')} wire_api={fields.get('wire_api')} timeout={fields.get('timeout_minutes')}min"
+    if event == "codex_start":
+        return f"Codex 已启动：attempt={fields.get('attempt')} pid={fields.get('pid')} prompt_chars={fields.get('prompt_chars')}"
+    if event == "heartbeat":
+        return f"heartbeat：attempt={fields.get('attempt')} elapsed={fields.get('elapsed_sec')}s turns={fields.get('turns')} exec={fields.get('exec_count')} answer_md={fields.get('answer_md_bytes')}B answer_json={fields.get('answer_json')} repeats={fields.get('repeats')}"
+    if event == "loop_detected":
+        return f"停止：检测到重复命令，attempt={fields.get('attempt')} repeats={fields.get('repeats')} command={fields.get('command')}"
+    if event == "timeout":
+        return f"停止：超时，attempt={fields.get('attempt')} elapsed={fields.get('elapsed_sec')}s"
+    if event == "bot_stop":
+        return f"停止：命中 bot:stop，attempt={fields.get('attempt')}"
+    if event == "attempt_end":
+        return f"Codex 结束：status={fields.get('status')} reason={fields.get('reason')} turns={fields.get('turns')} tokens={fields.get('tokens')} elapsed={fields.get('elapsed_sec')}s"
+    if event == "entry_success":
+        return f"入口成功：entry={fields.get('entry')}"
+    if event == "result":
+        return f"结束：status={fields.get('status')} confidence={fields.get('confidence') or 'unknown'} reason={fields.get('reason')} turns={fields.get('turns')} tokens={fields.get('tokens')} elapsed={fields.get('elapsed_sec')}s"
+    if event == "relevance":
+        return f"相关性分类：category={fields.get('category')} confidence={fields.get('confidence')} reason={fields.get('reason')}"
+    if event == "relevance_rejected":
+        return f"相关性拒绝：category={fields.get('category')} confidence={fields.get('confidence')}"
+    if event == "relevance_error":
+        return f"相关性分类失败，继续分析：{fields.get('error')}"
+    if event == "missing_api_key":
+        return f"缺少 API key：entry={fields.get('entry')} env={fields.get('api_key_env')}"
+    if event == "codex_error":
+        return f"Codex 错误：entry={fields.get('entry')} kind={fields.get('kind')} status={fields.get('status')}"
+    return one_line(" ".join(f"{key}={value}" for key, value in fields.items()))
+
+
+def log_event(event: str, message: str | None = None, **fields) -> None:
+    kind = "MSG" if event == "assistant" else "TOOL" if event == "exec" else "SYSTEM"
+    if message is None:
+        message = format_event(event, fields)
+    line = f"[{datetime.now(CST).strftime('%Y-%m-%d %H:%M:%S')}] [{kind}] {one_line(message)}"
     with open(SUPERVISOR_LOG, "a", encoding="utf-8") as fh:
         fh.write(line + "\n")
     print(line, flush=True)
@@ -162,10 +219,7 @@ def assistant_blocks(text: str, include_last: bool = False) -> list[str]:
 def emit_assistant(block: str, attempt: int, key: str) -> None:
     if scan_out.scan_text(block, [key]):
         block = "[assistant 文本包含疑似凭据，已隐藏]"
-    with open(CODEX_TEXT, "a", encoding="utf-8") as fh:
-        fh.write(f"--- attempt {attempt} ---\n{block}\n\n")
-    log_event("assistant", attempt=attempt, chars=len(block), preview=block[:2000])
-    print(f"[assistant]\n{block[:4000]}\n", flush=True)
+    log_event("assistant", message=block)
 
 
 def relevance_text() -> str:
@@ -428,14 +482,9 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
         "tokens": tokens,
         "exit_code": code,
         "entry_id": entry["id"],
+        "answer_md_bytes": ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0,
+        "answer_json": ANSWER_JSON.exists(),
     }
-    log_event(
-        "attempt_end",
-        attempt=attempt,
-        **result,
-        answer_md_bytes=ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0,
-        answer_json=ANSWER_JSON.exists(),
-    )
     return result
 
 
@@ -445,10 +494,17 @@ def write_result(result: dict, state: dict, attempts: int) -> None:
         "attempts": attempts,
         "finished_at": datetime.now(timezone.utc).isoformat(),
     }
+    if "confidence" not in payload:
+        confidence = ""
+        if ANSWER_JSON.exists():
+            try:
+                confidence = str(json.loads(ANSWER_JSON.read_text(encoding="utf-8")).get("confidence") or "")
+            except Exception:
+                confidence = ""
+        payload["confidence"] = confidence
     c.dump_json(RESULT_PATH, payload)
     c.dump_json(HEALTH_PATH, state)
     log_event("result", **payload)
-    print(json.dumps(payload, ensure_ascii=False))
 
 
 def main() -> None:
@@ -573,7 +629,6 @@ def main() -> None:
         final = result
         if result["status"] == "complete":
             model_pool.mark_success(state, entry)
-            log_event("entry_success", attempt=attempts, entry=entry["id"])
             break
         error = classify_log(read_log())
         if error:
