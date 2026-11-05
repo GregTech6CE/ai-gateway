@@ -1,0 +1,115 @@
+name: rerun
+
+# 仅管理员可触发；跳过 L0/L1，接受自由 prompt。
+# 只有仓库管理员能触发这个 workflow。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant:
+        required: true
+        type: string
+      repo:
+        required: true
+        type: string
+      issue:
+        required: true
+        type: string
+      prompt:
+        description: 可选自由 prompt；留空则使用 prompts/analyze.md
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  rerun:
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    environment: llm
+    steps:
+      - uses: actions/checkout@v4
+      - name: App token (read, step scoped)
+        id: app_ro
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.tenant == 'gt6ce-fork' && vars.LILY_APP_CLIENT_ID || vars.GT6CE_APP_CLIENT_ID }}
+          private-key: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LILY_APP_PRIVATE_KEY || secrets.GT6CE_APP_PRIVATE_KEY }}
+          permission-issues: read
+          permission-contents: read
+      - name: Snapshot
+        id: snap
+        env:
+          TENANT: ${{ inputs.tenant }}
+          REPO: ${{ inputs.repo }}
+          ISSUE: ${{ inputs.issue }}
+          GH_RO_TOKEN: ${{ steps.app_ro.outputs.token }}
+          SNAPSHOT_ONLY: "true"
+          LLM_KEY: ""
+          LLM_BASE_URL: ""
+        run: |
+          mkdir -p inputs
+          python - <<'PY'
+          import json, os, sys
+          sys.path.insert(0, "scripts")
+          import common as c
+          repo, issue = os.environ["REPO"], os.environ["ISSUE"]
+          token = os.environ["GH_RO_TOKEN"]
+          data = c.request("GET", f"/repos/{repo}/issues/{issue}", token)
+          comments = c.paginate(f"/repos/{repo}/issues/{issue}/comments", token, 5)
+          snap = {"repo": repo, "issue": {"number": data["number"], "title": data.get("title", ""), "body": data.get("body", "")},
+                  "comments": [{"id": x["id"], "author": x["user"]["login"], "body": x.get("body", "")} for x in comments],
+                  "attachments": c.attachments((data.get("body") or "") + "\n" + "\n".join(x.get("body") or "" for x in comments))}
+          canonical = json.dumps(snap, ensure_ascii=False, sort_keys=True)
+          snap["sha256"] = c.sha256_text(canonical)
+          c.dump_json("inputs/snapshot.json", snap)
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
+              fh.write(f"sha={snap['sha256']}\n")
+          PY
+      - name: Install Codex CLI (pin before production)
+        run: npm install -g @openai/codex@0.166.0
+      - name: Checkout analysed code
+        uses: actions/checkout@v4
+        with:
+          repository: Tanimodori/GregTech6
+          ref: master
+          path: code
+          fetch-depth: 1
+      - name: Prefetch attachments
+        run: python scripts/prefetch.py
+      - name: Run Codex
+        env:
+          TENANT: ${{ inputs.tenant }}
+          REPO: ${{ inputs.repo }}
+          ISSUE: ${{ inputs.issue }}
+          GH_RO_TOKEN: ${{ steps.app_ro.outputs.token }}
+          BOT_ENABLED: ${{ vars.BOT_ENABLED }}
+          LLM_KEY: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LLM_KEY_GT6CE_FORK || secrets.LLM_KEY_GT6CE_ORG }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          RERUN_PROMPT: ${{ inputs.prompt }}
+        run: python scripts/agent_supervisor.py
+      - name: Render
+        run: |
+          python scripts/render.py --tenant "${{ inputs.tenant }}" --issue "${{ inputs.issue }}" \
+            --snapshot "${{ steps.snap.outputs.sha }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+      - name: App token (issues:write)
+        id: app_rw
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.tenant == 'gt6ce-fork' && vars.LILY_APP_CLIENT_ID || vars.GT6CE_APP_CLIENT_ID }}
+          private-key: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LILY_APP_PRIVATE_KEY || secrets.GT6CE_APP_PRIVATE_KEY }}
+          permission-issues: write
+      - name: Write back
+        env:
+          TENANT: ${{ inputs.tenant }}
+          REPO: ${{ inputs.repo }}
+          ISSUE: ${{ inputs.issue }}
+          COMMENT_ID: ""
+          GH_RW_TOKEN: ${{ steps.app_rw.outputs.token }}
+          BOT_ENABLED: ${{ vars.BOT_ENABLED }}
+          SNAPSHOT_HASH: ${{ steps.snap.outputs.sha }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LLM_KEY: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LLM_KEY_GT6CE_FORK || secrets.LLM_KEY_GT6CE_ORG }}
+        run: python scripts/write_back.py

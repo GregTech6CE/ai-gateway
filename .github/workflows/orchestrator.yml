@@ -1,0 +1,196 @@
+name: orchestrator
+
+on:
+  workflow_dispatch:
+    inputs:
+      tenant:
+        description: 租户 id（config/tenants.json）
+        required: true
+        type: string
+      repo:
+        description: issue 所在仓库（owner/name）
+        required: true
+        type: string
+      issue:
+        description: issue 编号
+        required: true
+        type: string
+      comment_id:
+        description: 触发评论 id（issue_comment 事件）
+        required: false
+        type: string
+      event:
+        description: 事件类型：issues 或 issue_comment
+        required: true
+        type: string
+      dry_run:
+        description: 为 true 时只跑 gate/analysis、不发评论
+        required: false
+        default: "false"
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: lily-${{ inputs.repo }}-${{ inputs.issue }}
+  cancel-in-progress: false
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      decision: ${{ steps.gate.outputs.decision }}
+      comment_id: ${{ steps.gate.outputs.comment_id }}
+      snapshot_hash: ${{ steps.gate.outputs.snapshot_hash }}
+      code_repo: ${{ steps.gate.outputs.code_repo }}
+      code_ref: ${{ steps.gate.outputs.code_ref }}
+      sparse: ${{ steps.gate.outputs.sparse }}
+    steps:
+      - uses: actions/checkout@v4
+      # TODO：正式启用前把第三方 action pin 到完整 commit SHA。
+      - name: App token (read)
+        id: app_ro
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.tenant == 'gt6ce-fork' && vars.LILY_APP_CLIENT_ID || vars.GT6CE_APP_CLIENT_ID }}
+          private-key: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LILY_APP_PRIVATE_KEY || secrets.GT6CE_APP_PRIVATE_KEY }}
+          permission-issues: read
+          permission-contents: read
+      - name: App token (issues:write)
+        id: app_rw
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.tenant == 'gt6ce-fork' && vars.LILY_APP_CLIENT_ID || vars.GT6CE_APP_CLIENT_ID }}
+          private-key: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LILY_APP_PRIVATE_KEY || secrets.GT6CE_APP_PRIVATE_KEY }}
+          permission-issues: write
+      - name: Gate
+        id: gate
+        env:
+          TENANT: ${{ inputs.tenant }}
+          REPO: ${{ inputs.repo }}
+          ISSUE: ${{ inputs.issue }}
+          COMMENT_ID: ${{ inputs.comment_id }}
+          EVENT: ${{ inputs.event }}
+          GH_RO_TOKEN: ${{ steps.app_ro.outputs.token }}
+          GH_RW_TOKEN: ${{ steps.app_rw.outputs.token }}
+          SELF_TOKEN: ${{ github.token }}
+          B_REPO: ${{ github.repository }}
+          BOT_ENABLED: ${{ vars.BOT_ENABLED }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          LLM_KEY: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LLM_KEY_GT6CE_FORK || secrets.LLM_KEY_GT6CE_ORG }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python scripts/gate.py
+      - name: Upload gate inputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: gate-${{ github.run_id }}
+          path: inputs/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  analysis:
+    needs: gate
+    if: needs.gate.outputs.decision == 'proceed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    # 阶段一：Required reviewers = owner；阶段二移除审批或整行。
+    environment: llm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download gate inputs
+        uses: actions/download-artifact@v4
+        with:
+          name: gate-${{ github.run_id }}
+          path: inputs
+      - name: App token (read, step scoped)
+        id: app_ro
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.tenant == 'gt6ce-fork' && vars.LILY_APP_CLIENT_ID || vars.GT6CE_APP_CLIENT_ID }}
+          private-key: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LILY_APP_PRIVATE_KEY || secrets.GT6CE_APP_PRIVATE_KEY }}
+          permission-issues: read
+          permission-contents: read
+      - name: Checkout analysed code
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.gate.outputs.code_repo }}
+          ref: ${{ needs.gate.outputs.code_ref }}
+          path: code
+          fetch-depth: 1
+      - name: Sparse checkout
+        if: needs.gate.outputs.sparse != ''
+        run: |
+          cd code
+          git sparse-checkout init --cone
+          git sparse-checkout set ${{ needs.gate.outputs.sparse }}
+      - name: Install Codex CLI (pin before production)
+        run: npm install -g @openai/codex@0.166.0
+      - name: Prefetch attachments
+        run: python scripts/prefetch.py
+      - name: Run Codex under supervisor
+        env:
+          TENANT: ${{ inputs.tenant }}
+          REPO: ${{ inputs.repo }}
+          ISSUE: ${{ inputs.issue }}
+          GH_RO_TOKEN: ${{ steps.app_ro.outputs.token }}
+          BOT_ENABLED: ${{ vars.BOT_ENABLED }}
+          LLM_KEY: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LLM_KEY_GT6CE_FORK || secrets.LLM_KEY_GT6CE_ORG }}
+          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+        run: python scripts/agent_supervisor.py
+      - name: Upload analysis outputs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-${{ github.run_id }}
+          path: outputs/
+          if-no-files-found: ignore
+          retention-days: 30
+
+  write-back:
+    needs: [gate, analysis]
+    if: always() && needs.gate.outputs.decision == 'proceed' && inputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download analysis outputs
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: analysis-${{ github.run_id }}
+          path: outputs
+      - name: App token (issues:write, step scoped)
+        id: app_rw
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ inputs.tenant == 'gt6ce-fork' && vars.LILY_APP_CLIENT_ID || vars.GT6CE_APP_CLIENT_ID }}
+          private-key: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LILY_APP_PRIVATE_KEY || secrets.GT6CE_APP_PRIVATE_KEY }}
+          permission-issues: write
+      - name: Render
+        continue-on-error: true
+        run: |
+          python scripts/render.py \
+            --tenant "${{ inputs.tenant }}" \
+            --issue "${{ inputs.issue }}" \
+            --snapshot "${{ needs.gate.outputs.snapshot_hash }}" \
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --status "$(python -c 'import json;print(json.load(open("outputs/result.json")).get("status","failed"))' 2>/dev/null || echo failed)" \
+            --reason "$(python -c 'import json;print(json.load(open("outputs/result.json")).get("reason",""))' 2>/dev/null || echo '')"
+      - name: Write back
+        env:
+          TENANT: ${{ inputs.tenant }}
+          REPO: ${{ inputs.repo }}
+          ISSUE: ${{ inputs.issue }}
+          COMMENT_ID: ${{ needs.gate.outputs.comment_id }}
+          GH_RW_TOKEN: ${{ steps.app_rw.outputs.token }}
+          GH_RO_TOKEN: ${{ steps.app_rw.outputs.token }}
+          BOT_ENABLED: ${{ vars.BOT_ENABLED }}
+          SNAPSHOT_HASH: ${{ needs.gate.outputs.snapshot_hash }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          LLM_KEY: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LLM_KEY_GT6CE_FORK || secrets.LLM_KEY_GT6CE_ORG }}
+        run: python scripts/write_back.py
