@@ -1,0 +1,92 @@
+{
+  "tenants": {
+    "gt6ce-fork": {
+      "enabled": true,
+      "issue_repo": "Tanimodori/GregTech6",
+      "code_repo": "GregTech6CE/GregTech6",
+      "code_ref_mode": "tag",
+      "tag_template": "{version}",
+      "fallback_ref": "master",
+      "sparse_checkout": [
+        "core/src/main/java/gregtech",
+        "core/src/main/resources/assets/gt6ce/lang",
+        "core/src/main/resources/assets/gt6ce"
+      ],
+      "app_key_env": "LILY_APP_PRIVATE_KEY",
+      "app_client_id_env": "LILY_APP_CLIENT_ID",
+      "bot_login": "lily-chan-bot[bot]",
+      "bot_mention": "@lily-chan-bot",
+      "llm_key_env": "LLM_KEY_GT6CE_FORK",
+      "llm": {
+        "base_url_env": "LLM_BASE_URL",
+        "provider_alias": "agg",
+        "wire_api": "chat",
+        "l1_model": "deepseek-v4.1-flash",
+        "l1_context": 200000,
+        "l1_effort": "low",
+        "l2_model": "deepseek-v4.1-flash",
+        "l2_context": 1000000,
+        "l2_effort": "high"
+      },
+      "comment_language": "zh",
+      "attach_run_link": true,
+      "labels_allowlist": [
+        "crash",
+        "parity",
+        "translation",
+        "needs info",
+        "needs triage",
+        "1.20.1",
+        "1.21.1"
+      ],
+      "reject": {
+        "only": ["spam"],
+        "min_confidence": 0.9
+      }
+    },
+    "gt6ce-org": {
+      "enabled": false,
+      "issue_repo": "GregTech6CE/GregTech6",
+      "code_repo": "GregTech6CE/GregTech6",
+      "code_ref_mode": "tag",
+      "tag_template": "{version}",
+      "fallback_ref": "master",
+      "sparse_checkout": [
+        "core/src/main/java/gregtech",
+        "core/src/main/resources/assets/gt6ce/lang",
+        "core/src/main/resources/assets/gt6ce"
+      ],
+      "app_key_env": "GT6CE_APP_PRIVATE_KEY",
+      "app_client_id_env": "GT6CE_APP_CLIENT_ID",
+      "bot_login": "gt6ce-bot[bot]",
+      "bot_mention": "@gt6ce-bot",
+      "llm_key_env": "LLM_KEY_GT6CE_ORG",
+      "llm": {
+        "base_url_env": "LLM_BASE_URL",
+        "provider_alias": "agg",
+        "wire_api": "chat",
+        "l1_model": "deepseek-v4.1-flash",
+        "l1_context": 200000,
+        "l1_effort": "low",
+        "l2_model": "deepseek-v4.1-flash",
+        "l2_context": 1000000,
+        "l2_effort": "high"
+      },
+      "comment_language": "zh",
+      "attach_run_link": true,
+      "labels_allowlist": [
+        "crash",
+        "parity",
+        "translation",
+        "needs info",
+        "needs triage",
+        "1.20.1",
+        "1.21.1"
+      ],
+      "reject": {
+        "only": ["spam"],
+        "min_confidence": 0.9
+      }
+    }
+  }
+}

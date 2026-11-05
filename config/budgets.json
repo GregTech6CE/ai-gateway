@@ -1,0 +1,22 @@
+{
+  "defaults": {
+    "per_issue_per_hour": 1,
+    "per_repo_per_day": 30,
+    "global_per_day": 50,
+    "running_stale_minutes": 70,
+    "l1": {
+      "timeout_seconds": 90
+    },
+    "l2": {
+      "timeout_minutes": 60,
+      "max_turns": 0,
+      "max_tokens": 0,
+      "loop_repeat_threshold": 3
+    },
+    "artifacts": {
+      "retention_days": 30,
+      "max_attachment_bytes": 20971520,
+      "max_total_attachment_bytes": 62914560
+    }
+  }
+}

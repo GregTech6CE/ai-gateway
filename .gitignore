@@ -1,0 +1,10 @@
+.cache/
+.codex/
+.env
+*.pem
+*.key
+node_modules/
+inputs/
+outputs/
+__pycache__/
+*.pyc

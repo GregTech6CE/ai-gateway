@@ -1,0 +1,45 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "lily answer",
+  "type": "object",
+  "required": ["issue_type", "conclusion", "confidence", "evidence", "fix_plan", "labels", "partial"],
+  "properties": {
+    "issue_type": {
+      "enum": ["bug", "crash", "parity", "translation", "enhancement", "question", "unknown"]
+    },
+    "conclusion": { "type": "string", "minLength": 10, "maxLength": 4000 },
+    "root_cause": { "type": "string", "maxLength": 6000 },
+    "confidence": { "enum": ["high", "medium", "low"] },
+    "evidence": {
+      "type": "array",
+      "maxItems": 40,
+      "items": {
+        "type": "object",
+        "required": ["summary"],
+        "properties": {
+          "summary": { "type": "string", "maxLength": 800 },
+          "file": { "type": "string", "maxLength": 400 },
+          "line_start": { "type": "integer", "minimum": 1 },
+          "line_stop": { "type": "integer", "minimum": 1 },
+          "ref": { "type": "string", "maxLength": 800 }
+        }
+      }
+    },
+    "fix_plan": {
+      "type": "array",
+      "maxItems": 20,
+      "items": { "type": "string", "maxLength": 800 }
+    },
+    "affected_versions": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 80 }
+    },
+    "labels": {
+      "type": "array",
+      "items": { "type": "string", "maxLength": 80 }
+    },
+    "partial": { "type": "boolean" },
+    "notes": { "type": "string", "maxLength": 4000 }
+  },
+  "additionalProperties": false
+}
