@@ -1,7 +1,7 @@
 """共享模型池：endpoint 是健康单位，role 只是绑定。仅使用标准库。
 
 - endpoint：provider + base_url + api_key_env + model，是会被 401/429 打挂的对象。
-- role：preflight / analysis，只决定用哪个 endpoint、context、effort 与顺序。
+- role：共享模型池的绑定（当前为 analysis），只决定用哪个 endpoint、context、effort 与顺序。
 - down/cooldown 只记在 endpoint 上；一个 endpoint 挂了，所有绑定它的 role 都不可用。
 """
 
@@ -240,11 +240,11 @@ def select(pool: dict, role: str, state: dict) -> tuple[dict, str]:
     raise ModelError("unavailable", 0, 0, f"no healthy entry for {role}")
 
 
-def candidates(pool: dict, role: str, state: dict) -> list[dict]:
+def candidates(pool: dict, role: str, state: dict, require_key: bool = True) -> list[dict]:
     return [
         entry
         for entry in bindings(pool, role)
-        if is_available(entry, state) and key_for(entry)
+        if is_available(entry, state) and (not require_key or key_for(entry))
     ]
 
 

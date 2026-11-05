@@ -16,6 +16,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as c  # noqa: E402
 import model_pool  # noqa: E402
+import scan_out  # noqa: E402
 
 REPO = c.env("REPO")
 ISSUE = str(c.env("ISSUE"))
@@ -33,7 +34,9 @@ ANSWER_MD = OUTPUTS / "answer.md"
 ANSWER_JSON = OUTPUTS / "answer.json"
 RESULT_PATH = OUTPUTS / "result.json"
 HEALTH_PATH = OUTPUTS / "model_health.json"
+RELEVANCE_PATH = OUTPUTS / "relevance.json"
 SUPERVISOR_LOG = OUTPUTS / "supervisor.log"
+CODEX_TEXT = OUTPUTS / "codex_text.log"
 REQUIRED = ("issue_type", "conclusion", "confidence", "evidence", "fix_plan", "labels", "partial")
 
 
@@ -133,6 +136,106 @@ def count_exec(text: str) -> int:
     return sum(1 for line in text.splitlines() if line.strip() == "exec")
 
 
+def assistant_blocks(text: str, include_last: bool = False) -> list[str]:
+    lines = text.splitlines()
+    blocks: list[str] = []
+    index = 0
+    boundaries = ("exec", "apply patch", "tokens used", "codex")
+    while index < len(lines):
+        if lines[index].strip() != "codex":
+            index += 1
+            continue
+        cursor = index + 1
+        buffer: list[str] = []
+        while cursor < len(lines) and lines[cursor].strip() not in boundaries:
+            buffer.append(lines[cursor])
+            cursor += 1
+        finished = cursor < len(lines)
+        if buffer and (finished or include_last):
+            block = "\n".join(buffer).strip()
+            if block:
+                blocks.append(block)
+        index = cursor if finished else len(lines)
+    return blocks
+
+
+def emit_assistant(block: str, attempt: int, key: str) -> None:
+    if scan_out.scan_text(block, [key]):
+        block = "[assistant 文本包含疑似凭据，已隐藏]"
+    with open(CODEX_TEXT, "a", encoding="utf-8") as fh:
+        fh.write(f"--- attempt {attempt} ---\n{block}\n\n")
+    log_event("assistant", attempt=attempt, chars=len(block), preview=block[:2000])
+    print(f"[assistant]\n{block[:4000]}\n", flush=True)
+
+
+def relevance_text() -> str:
+    path = c.ROOT / "inputs/snapshot.json"
+    if not path.exists():
+        return ""
+    try:
+        snap = json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return ""
+    issue = snap.get("issue") or {}
+    parts = [
+        f"标题：{issue.get('title', '')}",
+        f"标签：{', '.join(issue.get('labels') or [])}",
+        f"正文：\n{issue.get('body') or ''}",
+    ]
+    comments = snap.get("comments") or []
+    if comments:
+        parts.append("评论：\n" + "\n".join(
+            f"- {(item.get('body') or '')[:2000]}" for item in comments[:10]
+        ))
+    attachments = snap.get("attachments") or []
+    if attachments:
+        parts.append("附件：\n" + "\n".join(f"- {url}" for url in attachments[:20]))
+    return "\n\n".join(parts)[:12000]
+
+
+def classify_relevance(entry: dict, key: str) -> dict | None:
+    if not key:
+        return None
+    prompt = (c.ROOT / "prompts/relevance.md").read_text(encoding="utf-8")
+    text = relevance_text()
+    if not text:
+        return None
+    messages = [
+        {"role": "system", "content": prompt},
+        {"role": "user", "content": text},
+    ]
+    try:
+        content = model_pool.chat(
+            entry,
+            key,
+            messages,
+            max_tokens=int(budget["relevance"].get("max_tokens", 400)),
+            temperature=0,
+            response_format={"type": "json_object"},
+            timeout=int(budget["relevance"].get("timeout_seconds", 90)),
+        )
+        match = re.search(r"\{.*\}", content or "", re.S)
+        data = json.loads(match.group(0) if match else (content or "{}"))
+        category = str(data.get("relevance", "")).lower()
+        if category not in ("in_scope", "spam", "out_of_scope"):
+            return None
+        try:
+            confidence = min(max(float(data.get("confidence", 0)), 0.0), 1.0)
+        except (TypeError, ValueError):
+            confidence = 0.0
+        return {
+            "relevance": category,
+            "confidence": confidence,
+            "reason": str(data.get("reason") or "")[:800],
+            "evidence": [str(item)[:500] for item in (data.get("evidence") or [])][:10],
+            "entry_id": entry["id"],
+            "classified_at": datetime.now(timezone.utc).isoformat(),
+        }
+    except Exception as exc:
+        log_event("relevance_error", error=str(exc)[:300])
+        return None
+
+
 def stop_requested() -> bool:
     if not GH_RO:
         return False
@@ -225,6 +328,7 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
         last_started_command = ""
         last_answer_size = -1
         repeats = 0
+        seen_assistant = 0
         try:
             while proc.poll() is None:
                 time.sleep(1)
@@ -236,6 +340,11 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
                     text = read_log()
                     turns = count_turns(text)
                     execs = count_exec(text)
+                    blocks = assistant_blocks(text)
+                    for block in blocks[seen_assistant:]:
+                        emit_assistant(block, attempt, key)
+                    if len(blocks) > seen_assistant:
+                        seen_assistant = len(blocks)
                     answer_size = ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0
                     if execs > seen_exec:
                         command = last_exec_command(text)
@@ -297,6 +406,9 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
 
     elapsed = time.monotonic() - started
     text = read_log()
+    blocks = assistant_blocks(text, include_last=True)
+    for block in blocks[seen_assistant:]:
+        emit_assistant(block, attempt, key)
     turns = max(turns, count_turns(text))
     tokens = parse_tokens(text)
     code = proc.returncode if proc.returncode is not None else -1
@@ -369,6 +481,43 @@ def main() -> None:
     attempts = 0
     final: dict = {"status": "failed", "reason": "no attempt", "turns": 0, "elapsed_sec": 0, "tokens": 0, "exit_code": 0, "entry_id": ""}
 
+    first_entry = entries[0]
+    relevance = classify_relevance(first_entry, model_pool.key_for(first_entry))
+    if relevance:
+        c.dump_json(RELEVANCE_PATH, relevance)
+        log_event(
+            "relevance",
+            category=relevance["relevance"],
+            confidence=relevance["confidence"],
+            reason=relevance["reason"],
+            entry=relevance["entry_id"],
+        )
+        reject_cfg = repo_cfg.get("reject", {})
+        only = {str(item).lower() for item in reject_cfg.get("only", ["spam", "out_of_scope"])}
+        min_confidence = float(reject_cfg.get("min_confidence", 0.9))
+        if relevance["relevance"] in only and relevance["confidence"] >= min_confidence:
+            log_event(
+                "relevance_rejected",
+                category=relevance["relevance"],
+                confidence=relevance["confidence"],
+            )
+            write_result(
+                {
+                    "status": "rejected",
+                    "reason": f"relevance {relevance['relevance']} confidence={relevance['confidence']:.2f}",
+                    "turns": 0,
+                    "elapsed_sec": 0,
+                    "tokens": 0,
+                    "exit_code": 0,
+                    "entry_id": relevance["entry_id"],
+                    "relevance": relevance["relevance"],
+                    "confidence": relevance["confidence"],
+                },
+                state,
+                0,
+            )
+            return
+
     for entry in entries:
         key = model_pool.key_for(entry)
         if not key:
@@ -403,7 +552,7 @@ def main() -> None:
                 log_event("probe_retry", attempt=attempts, wait_sec=wait, kind=exc.kind)
                 time.sleep(wait)
                 try:
-                    model_pool.preflight(entry, key, pool_cfg)
+                    model_pool.probe(entry, key, pool_cfg)
                     log_event("probe_retry_ok", attempt=attempts, entry=entry["id"])
                 except model_pool.ModelError as second:
                     log_event(

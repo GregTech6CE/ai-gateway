@@ -12,7 +12,8 @@
       "fallback_ref": "master",
       "reject": {
         "only": [
-          "spam"
+          "spam",
+          "out_of_scope"
         ],
         "min_confidence": 0.9
       },
@@ -48,7 +49,8 @@
       "fallback_ref": "master",
       "reject": {
         "only": [
-          "spam"
+          "spam",
+          "out_of_scope"
         ],
         "min_confidence": 0.9
       },

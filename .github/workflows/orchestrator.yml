@@ -95,7 +95,6 @@ jobs:
           B_REPO: ${{ github.repository }}
           BOT_ENABLED: ${{ vars.BOT_ENABLED }}
           DRY_RUN: ${{ inputs.dry_run }}
-          MODEL_KEY_MISTRAL: ${{ secrets.MODEL_KEY_MISTRAL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python scripts/gate.py
       - name: Upload gate inputs
@@ -225,6 +224,7 @@ jobs:
             --issue "${{ inputs.issue }}" \
             --issue-title "${{ needs.gate.outputs.issue_title }}" \
             --snapshot "${{ needs.gate.outputs.snapshot_hash }}" \
+            --relevance outputs/relevance.json \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --status "$(python -c 'import json;print(json.load(open("outputs/result.json")).get("status","failed"))' 2>/dev/null || echo failed)" \
             --reason "$(python -c 'import json;print(json.load(open("outputs/result.json")).get("reason",""))' 2>/dev/null || echo '')"

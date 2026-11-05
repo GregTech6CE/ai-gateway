@@ -11,6 +11,21 @@ import scan_out  # noqa: E402
 
 
 class RenderTest(unittest.TestCase):
+    def test_rejection_renders_category_and_marker(self):
+        relevance = {
+            "relevance": "spam",
+            "confidence": 0.97,
+            "reason": "未知链接广告",
+        }
+        repo_cfg = {"_repo": "Tanimodori/GregTech6", "_issue": "1"}
+        text = render.render_rejection(
+            relevance, repo_cfg, "https://example/run/1", "abc", issue_title="测试", issue_number="1"
+        )
+        self.assertIn("未进入代码分析", text)
+        self.assertIn("垃圾信息", text)
+        self.assertIn("未知链接广告", text)
+        self.assertIn("lily:rejected", text)
+
     def test_answer_renders_maamend_style_sections(self):
         answer = json.loads((ROOT / "tests/fixtures/answer.sample.json").read_text(encoding="utf-8"))
         repo_cfg = {"_repo": "Tanimodori/GregTech6", "_issue": "1"}

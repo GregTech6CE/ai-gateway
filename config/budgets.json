@@ -4,8 +4,9 @@
     "per_repo_per_day": 30,
     "global_per_day": 50,
     "running_stale_minutes": 70,
-    "l1": {
-      "timeout_seconds": 90
+    "relevance": {
+      "timeout_seconds": 90,
+      "max_tokens": 400
     },
     "l2": {
       "timeout_minutes": 60,

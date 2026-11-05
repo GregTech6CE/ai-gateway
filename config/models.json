@@ -13,14 +13,6 @@
         }
       ],
       "roles": {
-        "preflight": [
-          {
-            "endpoint": "mistral-deepseek",
-            "context": 200000,
-            "effort": "low",
-            "priority": 10
-          }
-        ],
         "analysis": [
           {
             "endpoint": "mistral-deepseek",

@@ -83,7 +83,7 @@ jobs:
           c.dump_json("inputs/snapshot.json", snap)
           pool = model_pool.load_pool(repo_cfg.get("model_pool", "shared"))
           health = model_pool.read_health(os.environ.get("SELF_TOKEN", ""), os.environ.get("B_REPO", ""))
-          c.dump_json("inputs/model.json", {"pool": repo_cfg.get("model_pool", "shared"), "preflight_entry": None, "analysis_entries": model_pool.candidates(pool, "analysis", health)})
+          c.dump_json("inputs/model.json", {"pool": repo_cfg.get("model_pool", "shared"), "analysis_entries": model_pool.candidates(pool, "analysis", health)})
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"sha={snap['sha256']}\n")
               fh.write(f"title={snap['issue']['title']}\n")
@@ -144,9 +144,12 @@ jobs:
       - name: Render
         run: |
           python scripts/render.py --repo "${{ inputs.repo }}" --issue "${{ inputs.issue }}" \
+            --relevance outputs/relevance.json \
             --issue-title "${{ steps.snap.outputs.title }}" \
             --snapshot "${{ steps.snap.outputs.sha }}" \
-            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+            --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --status "$(python -c 'import json;print(json.load(open("outputs/result.json")).get("status","failed"))' 2>/dev/null || echo failed)" \
+            --reason "$(python -c 'import json;print(json.load(open("outputs/result.json")).get("reason",""))' 2>/dev/null || echo '')"
       - name: App token (issues:write)
         id: app_rw
         uses: actions/create-github-app-token@v3

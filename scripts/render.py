@@ -174,6 +174,45 @@ def render_markdown(
     return text[:MAX_LENGTH]
 
 
+def render_rejection(
+    relevance: dict,
+    repo_cfg: dict,
+    run_url: str,
+    snapshot: str,
+    issue_title: str = "",
+    issue_number: str = "",
+) -> str:
+    template = (c.ROOT / "templates/reject.md").read_text(encoding="utf-8")
+    issue = str(issue_number or repo_cfg.get("_issue", ""))
+    title = issue_title.strip() or "未提供标题"
+    category = str(relevance.get("relevance") or "unknown")
+    labels = {
+        "spam": "垃圾信息、未知链接或广告",
+        "out_of_scope": "与项目内容完全无关，或要求生成与项目完全无关的图片、视频、网页、三维模型",
+    }
+    label = labels.get(category, category)
+    reason = str(relevance.get("reason") or "未提供原因").strip()
+    try:
+        confidence = float(relevance.get("confidence", 0))
+    except (TypeError, ValueError):
+        confidence = 0.0
+    reason_block = f"> 原因：{reason}\n\n> 分类：`{category}`，置信度：{confidence:.2f}"
+    values = {
+        "{{issue_number}}": issue,
+        "{{issue_title}}": title,
+        "{{relevance_label}}": label,
+        "{{reason_block}}": reason_block,
+        "{{run_link_block}}": (
+            f"🔗 [GitHub Action 运行记录]({run_url})" if run_url else ""
+        ),
+        "{{marker}}": marker_for("rejected", repo_cfg.get("_repo", ""), issue, snapshot),
+    }
+    text = template
+    for key, value in values.items():
+        text = text.replace(key, value)
+    return text[:MAX_LENGTH]
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True)
@@ -183,6 +222,7 @@ def main() -> None:
     parser.add_argument("--run-url", default="")
     parser.add_argument("--answer", default="outputs/answer.json")
     parser.add_argument("--markdown", default="outputs/answer.md")
+    parser.add_argument("--relevance", default="outputs/relevance.json")
     parser.add_argument("--status", default="complete")
     parser.add_argument("--reason", default="")
     parser.add_argument("--out", default="outputs/comment.md")
@@ -194,8 +234,23 @@ def main() -> None:
 
     answer_path = Path(args.answer)
     markdown_path = Path(args.markdown)
+    relevance_path = Path(args.relevance)
     text = ""
-    if answer_path.exists() and not partial:
+    if args.status == "rejected" and relevance_path.exists():
+        try:
+            relevance = json.loads(relevance_path.read_text(encoding="utf-8"))
+        except Exception:
+            relevance = None
+        if relevance:
+            text = render_rejection(
+                relevance,
+                repo_cfg,
+                args.run_url,
+                args.snapshot,
+                issue_title=args.issue_title,
+                issue_number=args.issue,
+            )
+    if not text and answer_path.exists() and not partial:
         try:
             data = json.loads(answer_path.read_text(encoding="utf-8"))
         except Exception:
