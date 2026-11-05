@@ -85,7 +85,7 @@ def start() -> None:
 
     comment = {} if dry_run else post_placeholder()
     payload = {
-        "ref": "branch",
+        "ref": "master",
         "return_run_details": True,
         "inputs": {
             "repo": repo,

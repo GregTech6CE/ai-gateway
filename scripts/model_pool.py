@@ -109,41 +109,44 @@ def is_available(entry: dict, state: dict) -> bool:
 
 def mark_success(state: dict, entry: dict) -> None:
     item = _endpoint_state(state, entry["id"])
-    item.update({"status": "ok", "failures": 0, "updated_at": _iso(_now())})
+    item.update(
+        {
+            "status": "ok",
+            "failures": 0,
+            "early_failures": 0,
+            "late_failures": 0,
+            "updated_at": _iso(_now()),
+        }
+    )
     for key in ("until", "reason", "first_failure_at"):
         item.pop(key, None)
 
 
+def mark_used(state: dict, entry: dict) -> None:
+    """记录最后一次被选中，供下一轮按最久未用优先调度。"""
+    _endpoint_state(state, entry["id"])["last_used_at"] = _iso(_now())
+
+
+def _bucket(kind: str) -> str:
+    return "early" if kind in ("auth", "config") else "late"
+
+
 def mark_failure(state: dict, entry: dict, error: ModelError, cfg: dict) -> None:
-    """只标记 endpoint；role 绑定不单独保存健康状态。"""
+    """只标记 endpoint；早期/晚期分别累计，退避时间按 2^(n-1) 增长，成功时清零。"""
     item = _endpoint_state(state, entry["id"])
-    first = item.get("first_failure_at")
-    window = timedelta(hours=int(cfg.get("strike_window_hours", 24)))
-    if not first or _now() - _parse(first) > window:
-        item["failures"] = 1
-        item["first_failure_at"] = _iso(_now())
-    else:
-        item["failures"] = int(item.get("failures", 0)) + 1
+    bucket = _bucket(error.kind)
+    counter = f"{bucket}_failures"
+    item[counter] = int(item.get(counter, 0)) + 1
+    item["failures"] = int(item.get("failures", 0)) + 1
     item["reason"] = error.kind
     item["updated_at"] = _iso(_now())
 
-    if error.kind == "auth":
-        minutes = int(cfg.get("auth_cooldown_minutes", 15))
-        item["status"] = "cooldown"
-    elif error.kind == "rate":
-        seconds = error.retry_after or int(cfg.get("rate_limit_default_minutes", 5)) * 60
-        minutes = max(1, min(math.ceil(seconds / 60), int(cfg.get("rate_limit_max_minutes", 30))))
-        item["status"] = "cooldown"
-    elif error.kind == "config":
-        minutes = int(cfg.get("config_cooldown_minutes", 60))
-        item["status"] = "disabled"
-    else:
-        minutes = int(cfg.get("upstream_cooldown_minutes", 5))
-        item["status"] = "cooldown"
-
-    if int(item["failures"]) >= int(cfg.get("strikes", 3)):
-        item["status"] = "disabled"
-        minutes = int(cfg.get("strike_disable_minutes", 60))
+    base = float(cfg.get(f"{bucket}_base_minutes", 15 if bucket == "early" else 5))
+    cap = float(cfg.get(f"{bucket}_max_minutes", 1440 if bucket == "early" else 360))
+    if bucket == "late" and error.retry_after:
+        base = max(base, error.retry_after / 60)
+    minutes = min(cap, base * (2 ** (int(item[counter]) - 1)))
+    item["status"] = "disabled" if minutes >= cap else "cooldown"
     item["until"] = _iso(_now() + timedelta(minutes=minutes))
 
 
@@ -153,10 +156,12 @@ def key_for(entry: dict) -> str:
 
 def _post(entry: dict, key: str, payload: dict, timeout: int) -> dict:
     url = entry["base_url"].rstrip("/") + "/chat/completions"
+    headers = {"Authorization": f"Bearer {key}", "Content-Type": "application/json"}
+    headers.update({str(k): str(v) for k, v in (entry.get("headers") or {}).items()})
     request = urllib.request.Request(
         url,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        headers=headers,
         method="POST",
     )
     try:
@@ -215,21 +220,29 @@ def probe(entry: dict, key: str, cfg: dict) -> None:
 
 
 def select(pool: dict, role: str, state: dict) -> tuple[dict, str]:
-    for entry in bindings(pool, role):
-        if not is_available(entry, state):
-            continue
-        key = key_for(entry)
-        if key:
-            return entry, key
+    for entry in candidates(pool, role, state):
+        return entry, key_for(entry)
     raise ModelError("unavailable", 0, 0, f"no healthy entry for {role}")
 
 
 def candidates(pool: dict, role: str, state: dict, require_key: bool = True) -> list[dict]:
-    return [
+    """可用 endpoint 按「最久未用」排序，其次按 priority 与 id，作为简单的 key 负载均衡。"""
+    items = [
         entry
         for entry in bindings(pool, role)
         if is_available(entry, state) and (not require_key or key_for(entry))
     ]
+
+    def sort_key(entry: dict):
+        used = _endpoint_state(state, entry["id"]).get("last_used_at")
+        try:
+            used_at = _parse(used).timestamp() if used else 0.0
+        except Exception:
+            used_at = 0.0
+        return (used_at, int(entry.get("priority", 100)), entry["id"])
+
+    items.sort(key=sort_key)
+    return items
 
 
 def failover_chat(

@@ -651,8 +651,8 @@ def main() -> None:
             )
             return
 
-    # 本轮锁定第一个候选 endpoint，不跨 endpoint 切换。
-    for entry in entries[:1]:
+    # 候选按「最久未用」排序；逐个尝试，失败的 endpoint 会被记为冷却，下次自然轮换。
+    for entry in entries:
         key = model_pool.key_for(entry)
         if not key:
             log_event("missing_api_key", entry=entry["id"], api_key_env=entry.get("api_key_env"))
@@ -660,6 +660,7 @@ def main() -> None:
                 state, entry, model_pool.ModelError("auth", 0, 0, "missing key"), pool_cfg
             )
             continue
+        model_pool.mark_used(state, entry)
         attempts += 1
         archive_attempt(attempts)
         log_event("attempt_archive", attempt=attempts, entry=entry["id"])

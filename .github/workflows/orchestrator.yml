@@ -151,6 +151,7 @@ jobs:
           ISSUE: ${{ inputs.issue }}
           BOT_ENABLED: ${{ vars.BOT_ENABLED }}
           MODEL_KEY_MISTRAL: ${{ secrets.MODEL_KEY_MISTRAL }}
+          MODEL_KEY_CLINEPASS: ${{ secrets.MODEL_KEY_CLINEPASS }}
         run: python scripts/agent_supervisor.py
       - name: Upload analysis outputs
         if: always()

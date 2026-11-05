@@ -10,6 +10,18 @@
           "model": "deepseek-v4-1-flash-1017",
           "wire_api": "responses",
           "enabled": true
+        },
+        {
+          "id": "clinepass-deepseek",
+          "provider": "cline",
+          "base_url": "https://api.cline.bot/api/v1",
+          "api_key_env": "MODEL_KEY_CLINEPASS",
+          "model": "cline-pass/deepseek-v4.1-flash-1017",
+          "wire_api": "chat",
+          "headers": {
+            "X-Response-Format": "openai"
+          },
+          "enabled": true
         }
       ],
       "roles": {
@@ -19,6 +31,12 @@
             "context": 1048576,
             "effort": "high",
             "priority": 10
+          },
+          {
+            "endpoint": "clinepass-deepseek",
+            "context": 131072,
+            "effort": "high",
+            "priority": 20
           }
         ]
       }

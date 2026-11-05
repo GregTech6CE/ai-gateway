@@ -20,14 +20,10 @@
       "max_total_attachment_bytes": 62914560
     },
     "model_pool": {
-      "auth_cooldown_minutes": 15,
-      "rate_limit_default_minutes": 5,
-      "rate_limit_max_minutes": 30,
-      "upstream_cooldown_minutes": 5,
-      "config_cooldown_minutes": 60,
-      "strikes": 3,
-      "strike_window_hours": 24,
-      "strike_disable_minutes": 60,
+      "early_base_minutes": 15,
+      "early_max_minutes": 1440,
+      "late_base_minutes": 5,
+      "late_max_minutes": 360,
       "analysis_probe_max_tokens": 8,
       "rate_limit_retries": 5,
       "rate_limit_wait_seconds": 60,
