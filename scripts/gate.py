@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import subprocess
 import sys
 import urllib.parse
 from datetime import datetime, timedelta, timezone
@@ -62,15 +63,45 @@ def parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
+def remote_tags(repo: str) -> set[str] | None:
+    try:
+        result = subprocess.run(
+            ["git", "ls-remote", "--tags", f"https://github.com/{repo}.git"],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            return None
+        tags = set()
+        for line in result.stdout.splitlines():
+            ref = line.split("	")[-1]
+            if ref.startswith("refs/tags/"):
+                tags.add(ref[len("refs/tags/"):].removesuffix("^{}"))
+        return tags
+    except Exception:
+        return None
+
+
 def resolve_ref() -> str:
     body = issue.get("body") or ""
-    version = c.form_field(body, "模组版本 / Mod version", "模组版本", "Mod version")
-    template = tenant.get("tag_template", "{version}")
-    if tenant.get("code_ref_mode") == "tag" and version:
-        tag = template.replace("{version}", version.strip())
-        if tag:
-            return tag
-    return tenant.get("fallback_ref", "master")
+    version = c.form_field(body, "模组版本 / Mod version", "模组版本", "Mod version").strip()
+    base = version[1:] if version[:1].lower() == "v" else version
+    template = tenant.get("tag_template", "v{version}")
+    candidates: list[str] = []
+    if base and tenant.get("code_ref_mode", "tag") == "tag":
+        formatted = template.replace("{version}", base)
+        if formatted:
+            candidates.append(formatted)
+        if base not in candidates:
+            candidates.append(base)
+    fallback = tenant.get("fallback_ref", "master")
+    candidates.append(fallback)
+    tags = remote_tags(tenant["code_repo"])
+    if tags:
+        for candidate in candidates:
+            if candidate in tags:
+                return candidate
+        return fallback
+    return candidates[0] if candidates else fallback
 
 
 def l1_classify(title: str, body: str) -> tuple[dict, dict | None]:
@@ -279,6 +310,7 @@ def main() -> None:
             code_ref=snapshot["code_ref"],
             code_repo=snapshot["code_repo"],
             sparse=" ".join(tenant.get("sparse_checkout", [])),
+            issue_title=issue.get("title", ""),
         )
 
     version = c.form_field(body, "模组版本 / Mod version", "模组版本", "Mod version")
@@ -310,6 +342,7 @@ def main() -> None:
         code_ref=snapshot["code_ref"],
         code_repo=snapshot["code_repo"],
         sparse=" ".join(tenant.get("sparse_checkout", [])),
+        issue_title=issue.get("title", ""),
         l1=json.dumps(verdict, ensure_ascii=False),
     )
 

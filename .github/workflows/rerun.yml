@@ -71,6 +71,7 @@ jobs:
           c.dump_json("inputs/model.json", {"pool": tenant.get("model_pool", "shared"), "preflight_entry": None, "analysis_entries": model_pool.candidates(pool, "analysis", health)})
           with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as fh:
               fh.write(f"sha={snap['sha256']}\n")
+              fh.write(f"title={snap['issue']['title']}\n")
           PY
       - name: Install Codex CLI (pin before production)
         run: npm install -g @openai/codex@0.166.0
@@ -96,6 +97,7 @@ jobs:
       - name: Render
         run: |
           python scripts/render.py --tenant "${{ inputs.tenant }}" --issue "${{ inputs.issue }}" \
+            --issue-title "${{ steps.snap.outputs.title }}" \
             --snapshot "${{ steps.snap.outputs.sha }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
       - name: App token (issues:write)

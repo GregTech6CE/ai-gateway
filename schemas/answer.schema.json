@@ -2,14 +2,33 @@
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "lily answer",
   "type": "object",
-  "required": ["issue_type", "conclusion", "confidence", "evidence", "fix_plan", "labels", "partial"],
+  "required": [
+    "issue_type",
+    "issue_summary",
+    "conclusion",
+    "root_cause",
+    "confidence",
+    "confidence_reason",
+    "evidence",
+    "user_advice",
+    "fix_plan",
+    "labels",
+    "partial"
+  ],
   "properties": {
     "issue_type": {
       "enum": ["bug", "crash", "parity", "translation", "enhancement", "question", "unknown"]
     },
+    "issue_summary": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": { "type": "string", "maxLength": 400 }
+    },
     "conclusion": { "type": "string", "minLength": 10, "maxLength": 4000 },
-    "root_cause": { "type": "string", "maxLength": 6000 },
+    "root_cause": { "type": "string", "minLength": 10, "maxLength": 6000 },
     "confidence": { "enum": ["high", "medium", "low"] },
+    "confidence_reason": { "type": "string", "maxLength": 800 },
     "evidence": {
       "type": "array",
       "maxItems": 40,
@@ -25,11 +44,17 @@
         }
       }
     },
+    "user_advice": {
+      "type": "array",
+      "maxItems": 10,
+      "items": { "type": "string", "maxLength": 600 }
+    },
     "fix_plan": {
       "type": "array",
       "maxItems": 20,
       "items": { "type": "string", "maxLength": 800 }
     },
+    "ai_fix_hint": { "type": "string", "maxLength": 4000 },
     "affected_versions": {
       "type": "array",
       "items": { "type": "string", "maxLength": 80 }

@@ -54,6 +54,15 @@ Variables：
 Environment `llm`：阶段一 Required reviewers = owner；阶段二移除审批。
 environment 只负责暂停 analysis job；LLM key 仍然是 repo secret。
 
+## 评论格式
+
+标题：`# GT6 Issue #N 分析：<issue 标题>`。
+
+章节顺序：`Issue 概要` → `关键证据`（折叠）→ `根因判断` → `给用户的建议` →
+`修复方案` → `给修复 AI 的建议`（可选，折叠）→ `置信度` → 运行记录。
+
+渲染器只使用 `schemas/answer.schema.json` 中的字段；缺失必需字段时降级为带横幅的 partial 评论。
+
 ## 模型池
 
 - `config/models.json` 分两层：`endpoints` 是健康单位（provider + base_url + key + model），

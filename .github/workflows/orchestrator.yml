@@ -51,6 +51,7 @@ jobs:
       code_repo: ${{ steps.gate.outputs.code_repo }}
       code_ref: ${{ steps.gate.outputs.code_ref }}
       sparse: ${{ steps.gate.outputs.sparse }}
+      issue_title: ${{ steps.gate.outputs.issue_title }}
     steps:
       - uses: actions/checkout@v4
       # TODO：正式启用前把第三方 action pin 到完整 commit SHA。
@@ -183,6 +184,7 @@ jobs:
           python scripts/render.py \
             --tenant "${{ inputs.tenant }}" \
             --issue "${{ inputs.issue }}" \
+            --issue-title "${{ needs.gate.outputs.issue_title }}" \
             --snapshot "${{ needs.gate.outputs.snapshot_hash }}" \
             --run-url "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
             --status "$(python -c 'import json;print(json.load(open("outputs/result.json")).get("status","failed"))' 2>/dev/null || echo failed)" \

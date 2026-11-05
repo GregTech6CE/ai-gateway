@@ -5,7 +5,7 @@
       "issue_repo": "Tanimodori/GregTech6",
       "code_repo": "GregTech6CE/GregTech6",
       "code_ref_mode": "tag",
-      "tag_template": "{version}",
+      "tag_template": "v{version}",
       "fallback_ref": "master",
       "sparse_checkout": [
         "core/src/main/java/gregtech",
@@ -40,7 +40,7 @@
       "issue_repo": "GregTech6CE/GregTech6",
       "code_repo": "GregTech6CE/GregTech6",
       "code_ref_mode": "tag",
-      "tag_template": "{version}",
+      "tag_template": "v{version}",
       "fallback_ref": "master",
       "sparse_checkout": [
         "core/src/main/java/gregtech",

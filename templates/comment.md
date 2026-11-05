@@ -1,34 +1,42 @@
-{{partial_banner}}## 结论
+# GT6 Issue #{{issue_number}} 分析：{{issue_title}}
 
-{{conclusion}}
+{{partial_banner}}## Issue 概要
 
-{{root_cause_block}}
+{{issue_summary}}
 
-**置信度**：{{confidence}}
+- 类型：{{issue_type}}
+- 影响版本：{{affected_versions}}
+- 建议标签：{{labels}}
 
-<details>
-<summary>证据与修复方案</summary>
+## 关键证据
 
-### 证据
+<details><summary>点击此处展开</summary>
 
 {{evidence}}
 
-### 修复方案
+</details>
+
+## 根因判断
+
+{{root_cause}}
+
+**结论**：{{conclusion}}
+
+## 给用户的建议
+
+{{user_advice}}
+
+## 修复方案
 
 {{fix_plan}}
 
-### 影响版本
+{{ai_fix_hint_block}}## 置信度
 
-{{affected_versions}}
-
-### 建议标签
-
-{{labels}}
-
-</details>
+- 等级：{{confidence}}
+- 说明：{{confidence_reason}}
 
 {{notes_block}}---
 
-{{run_link}}
+{{run_link_block}}
 
 {{marker}}
