@@ -1,6 +1,6 @@
-# GT6 Issue #{{issue_number}} 分析：{{issue_title}}
-
 {{partial_banner}}## Issue 概要
+
+标题：{{issue_title}} (#{{issue_number}})
 
 {{issue_summary}}
 
@@ -35,7 +35,7 @@
 - 等级：{{confidence}}
 - 说明：{{confidence_reason}}
 
-{{notes_block}}---
+---
 
 {{run_link_block}}
 

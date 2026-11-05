@@ -22,6 +22,7 @@ class RenderTest(unittest.TestCase):
             relevance, repo_cfg, "https://example/run/1", "abc", issue_title="测试", issue_number="1"
         )
         self.assertIn("未进入代码分析", text)
+        self.assertIn("标题：测试 (#1)", text)
         self.assertIn("垃圾信息", text)
         self.assertIn("未知链接广告", text)
         self.assertIn("lily:rejected", text)
@@ -38,14 +39,16 @@ class RenderTest(unittest.TestCase):
             issue_title="测试标题",
             issue_number="1",
         )
-        self.assertIn("# GT6 Issue #1 分析：测试标题", text)
         self.assertIn("## Issue 概要", text)
+        self.assertIn("标题：测试标题 (#1)", text)
+        self.assertNotIn("# GT6 Issue", text)
         self.assertIn("## 关键证据", text)
         self.assertIn("<details><summary>点击此处展开</summary>", text)
         self.assertIn("## 根因判断", text)
         self.assertIn("## 给用户的建议", text)
         self.assertIn("## 修复方案", text)
         self.assertIn("## 置信度", text)
+        self.assertIn("```text", text)
         self.assertIn("RecipeMap.java:120-138", text)
         self.assertIn("lily:done", text)
         self.assertNotIn("lily:partial", text)
@@ -61,7 +64,7 @@ class RenderTest(unittest.TestCase):
             issue_title="测试标题",
             issue_number="1",
         )
-        self.assertIn("# GT6 Issue #1 分析：测试标题", text)
+        self.assertIn("标题：测试标题 (#1)", text)
         self.assertIn("部分结论", text)
         self.assertIn("lily:partial", text)
 

@@ -97,21 +97,20 @@ def render_answer(
     issue = str(issue_number or repo_cfg.get("_issue", ""))
     title = issue_title.strip() or "未提供标题"
     root = str(answer.get("root_cause") or "").strip()
-    notes = str(answer.get("notes") or "").strip()
     hint = str(answer.get("ai_fix_hint") or "").strip()
     versions = "、".join(str(item) for item in answer.get("affected_versions") or []) or "未确定"
     allowed = {str(item).lower() for item in (repo_cfg.get("triage") or {}).get("write_only", [])}
     raw_labels = [
         str(item)
         for item in answer.get("labels") or []
-        if not allowed or str(item).lower() in allowed
+        if str(item).lower() in allowed and str(item).lower() != "needs triage"
     ]
     labels = ", ".join(raw_labels) or "无"
     values = {
         "{{issue_number}}": issue,
         "{{issue_title}}": title,
         "{{partial_banner}}": (
-            "> ⚠️ **部分结论**：分析在时限内未完成，以下为已完成内容。\n\n" if partial else ""
+            "> **部分结论**：分析在时限内未完成，以下为已完成内容。\n\n" if partial else ""
         ),
         "{{issue_summary}}": bullets(answer.get("issue_summary")),
         "{{issue_type}}": str(answer.get("issue_type") or "unknown"),
@@ -125,16 +124,17 @@ def render_answer(
         "{{ai_fix_hint_block}}": (
             "## 给修复 AI 的建议（可复制）\n\n"
             "<details><summary>点击此处展开</summary>\n\n"
-            f"{hint}\n\n"
+            "```text\n"
+            f"{hint}\n"
+            "```\n\n"
             "</details>\n\n"
             if hint
             else ""
         ),
         "{{confidence}}": str(answer.get("confidence") or "low"),
         "{{confidence_reason}}": str(answer.get("confidence_reason") or "未提供。").strip(),
-        "{{notes_block}}": f"> 备注：{notes}\n\n" if notes else "",
         "{{run_link_block}}": (
-            f"🔗 [GitHub Action 运行记录]({run_url})" if run_url else ""
+            f"[GitHub Action 运行记录]({run_url})" if run_url else ""
         ),
         "{{marker}}": marker_for(
             "partial" if partial else "done", repo_cfg.get("_repo", ""), issue, snapshot
@@ -145,11 +145,11 @@ def render_answer(
         text = text.replace(key, value)
     if len(text) > MAX_LENGTH:
         text = (
-            f"# GT6 Issue #{issue} 分析：{title}\n\n"
+            f"## Issue 概要\n\n标题：{title} (#{issue})\n\n"
             "## 结论\n\n"
             + values["{{conclusion}}"]
             + "\n\n> 评论过长，完整证据与修复方案见运行 artifact。\n\n"
-            + (f"🔗 [GitHub Action 运行记录]({run_url})\n\n" if run_url else "")
+            + (f"[GitHub Action 运行记录]({run_url})\n\n" if run_url else "")
             + values["{{marker}}"]
         )
     return text
@@ -166,10 +166,10 @@ def render_markdown(
 ) -> str:
     issue = str(issue_number or repo_cfg.get("_issue", ""))
     title = issue_title.strip() or "未提供标题"
-    banner = f"> ⚠️ **部分结论**：{reason}，以下为已完成内容。\n\n"
-    text = f"# GT6 Issue #{issue} 分析：{title}\n\n" + banner + markdown.strip()
+    banner = f"> **部分结论**：{reason}，以下为已完成内容。\n\n"
+    text = f"## Issue 概要\n\n标题：{title} (#{issue})\n\n" + banner + markdown.strip()
     if run_url:
-        text += f"\n\n---\n\n🔗 [GitHub Action 运行记录]({run_url})"
+        text += f"\n\n---\n\n[GitHub Action 运行记录]({run_url})"
     text += "\n\n" + marker_for("partial", repo_cfg.get("_repo", ""), issue, snapshot)
     return text[:MAX_LENGTH]
 
@@ -203,7 +203,7 @@ def render_rejection(
         "{{relevance_label}}": label,
         "{{reason_block}}": reason_block,
         "{{run_link_block}}": (
-            f"🔗 [GitHub Action 运行记录]({run_url})" if run_url else ""
+            f"[GitHub Action 运行记录]({run_url})" if run_url else ""
         ),
         "{{marker}}": marker_for("rejected", repo_cfg.get("_repo", ""), issue, snapshot),
     }
@@ -288,9 +288,9 @@ def main() -> None:
 
     if not text:
         text = (
-            f"# GT6 Issue #{args.issue} 分析：{args.issue_title or '未提供标题'}\n\n"
+            f"## Issue 概要\n\n标题：{args.issue_title or '未提供标题'} (#{args.issue})\n\n"
             "分析未能完成。可以稍后重新触发，或由维护者手动查看运行记录。\n\n"
-            + (f"🔗 [GitHub Action 运行记录]({args.run_url})\n\n" if args.run_url else "")
+            + (f"[GitHub Action 运行记录]({args.run_url})\n\n" if args.run_url else "")
             + marker_for("failed", repo_cfg.get("_repo", ""), args.issue, args.snapshot)
         )
 

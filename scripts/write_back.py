@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import urllib.parse
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -28,6 +29,54 @@ MODEL_KEY = c.env("MODEL_KEY_MISTRAL", "")
 repo_cfg = c.load_repo(REPO)
 OUTPUTS = c.ROOT / "outputs"
 COMMENT = OUTPUTS / "comment.md"
+ANSWER = OUTPUTS / "answer.json"
+
+
+def apply_triage(issue: dict) -> None:
+    if not ANSWER.exists():
+        return
+    try:
+        answer = json.loads(ANSWER.read_text(encoding="utf-8"))
+    except Exception:
+        return
+    cfg = repo_cfg.get("triage", {})
+    allowed = {str(item).lower() for item in cfg.get("write_only", [])} - {"needs triage"}
+    raw = [str(item).strip() for item in answer.get("labels") or []]
+    labels = [item for item in dict.fromkeys(raw) if item.lower() in allowed]
+    if not labels:
+        return
+    current = {
+        str(label.get("name", "")).lower(): str(label.get("name", ""))
+        for label in issue.get("labels", [])
+    }
+    try:
+        repo_labels = c.paginate(f"/repos/{REPO}/labels", GH_RO, max_pages=2)
+        existing = {
+            str(label.get("name", "")).lower(): str(label.get("name", ""))
+            for label in repo_labels
+        }
+    except Exception as exc:
+        print(f"读取 label 失败: {exc}", file=sys.stderr)
+        existing = {}
+    to_add: list[str] = []
+    resolved = False
+    for label in labels:
+        key = label.lower()
+        if key in current or key in existing:
+            resolved = True
+        if key in existing and key not in current:
+            to_add.append(existing[key])
+    if to_add:
+        c.request("POST", f"/repos/{REPO}/issues/{ISSUE}/labels", GH_RW, {"labels": to_add})
+    triggers = {str(item).lower() for item in cfg.get("triage_labels", [])}
+    if cfg.get("remove_after_triage", True) and resolved and (triggers & set(current)):
+        for trigger in triggers & set(current):
+            name = current[trigger]
+            c.request(
+                "DELETE",
+                f"/repos/{REPO}/issues/{ISSUE}/labels/{urllib.parse.quote(name, safe='')}",
+                GH_RW,
+            )
 
 
 def post(body: str) -> None:
@@ -60,6 +109,7 @@ def main() -> None:
             return
     except Exception as exc:
         print(f"switch check failed: {exc}", file=sys.stderr)
+        issue = {}
 
     result = {"status": "failed", "reason": "result missing"}
     if (OUTPUTS / "result.json").exists():
@@ -86,6 +136,11 @@ def main() -> None:
         sys.exit(1)
 
     post(text)
+
+    try:
+        apply_triage(issue)
+    except Exception as exc:
+        print(f"triage apply failed: {exc}", file=sys.stderr)
 
     model_pool.merge_health(SELF_TOKEN, B_REPO, OUTPUTS / "model_health.json")
 

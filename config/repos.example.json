@@ -24,6 +24,9 @@
         "process_only": [
           [
             "bug"
+          ],
+          [
+            "needs triage"
           ]
         ],
         "write_only": [

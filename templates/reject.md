@@ -1,6 +1,6 @@
-# GT6 Issue #{{issue_number}} 分析：{{issue_title}}
-
 ## 处理结果
+
+标题：{{issue_title}} (#{{issue_number}})
 
 该 issue 未进入代码分析：**{{relevance_label}}**。
 

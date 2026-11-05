@@ -104,68 +104,6 @@ def resolve_ref() -> str:
     return candidates[0] if candidates else fallback
 
 
-def triage_issue(issue: dict, body: str) -> list[str]:
-    cfg = repo_cfg.get("triage", {})
-    triggers = {str(item).lower() for item in cfg.get("triage_labels", [])}
-    current = {
-        str(label.get("name", "")).lower(): str(label.get("name", ""))
-        for label in issue.get("labels", [])
-    }
-    if not (triggers & set(current)):
-        return []
-    kind = c.form_field(body, "分类 / Type", "分类", "Type").lower()
-    wanted: list[str] = []
-    if "崩溃" in kind or "crash" in kind:
-        wanted.append("crash")
-    elif "原版差异" in kind or "parity" in kind:
-        wanted.append("parity")
-    elif "翻译" in kind or "translation" in kind:
-        wanted.append("translation")
-    elif "缺陷" in kind or "bug" in kind:
-        wanted.append("bug")
-    loader = c.form_field(
-        body, "游戏版本 / Minecraft Version", "游戏版本", "Minecraft Version"
-    ).lower()
-    if "1.21.1" in loader:
-        wanted.append("1.21.1")
-    if "1.20.1" in loader:
-        wanted.append("1.20.1")
-
-    allowed = {str(item).lower() for item in cfg.get("write_only", [])}
-    try:
-        existing_labels = c.paginate(f"/repos/{REPO}/labels", GH_RO, max_pages=2)
-        existing = {
-            str(item.get("name", "")).lower(): str(item.get("name", ""))
-            for item in existing_labels
-        }
-    except Exception as exc:
-        print(f"读取 label 失败: {exc}", file=sys.stderr)
-        existing = {}
-    to_add: list[str] = []
-    unique_wanted = list(dict.fromkeys(wanted))
-    for label in unique_wanted:
-        if label in allowed and label in existing and label not in current:
-            to_add.append(existing[label])
-    unresolved = [
-        label
-        for label in unique_wanted
-        if label not in allowed or (label not in current and label not in existing)
-    ]
-    if DRY_RUN:
-        return to_add
-    if to_add:
-        c.request("POST", f"/repos/{REPO}/issues/{ISSUE}/labels", GH_RW, {"labels": to_add})
-    if cfg.get("remove_after_triage", True) and wanted and not unresolved:
-        for trigger in triggers & set(current):
-            name = current[trigger]
-            c.request(
-                "DELETE",
-                f"/repos/{REPO}/issues/{ISSUE}/labels/{urllib.parse.quote(name, safe='')}",
-                GH_RW,
-            )
-    return to_add
-
-
 def main() -> None:
     global repo_cfg, pool, health
     try:
@@ -289,7 +227,6 @@ def main() -> None:
             finish("skip", "global daily quota reached")
 
     body = issue.get("body") or ""
-    triaged = triage_issue(issue, body)
     texts = "\n".join([body] + [(item.get("body") or "") for item in comments])
     attachments = c.attachments(texts)
     snapshot = {
@@ -344,15 +281,11 @@ def main() -> None:
     code_refs = " ".join(refs)
     run_cache_prefix = cache_prefix(repo_cfg["code_repo"])
 
-    version = c.form_field(body, "模组版本 / Mod version", "模组版本", "Mod version")
-    kind = c.form_field(body, "分类 / Type", "分类", "Type")
     summary = (
-        "🤖 **已受理，等待维护者批准**\n\n"
-        f"- 类型：{kind or '未填写'}\n"
-        f"- 版本：{version or '未填写'}\n"
-        f"- 附件：{len(attachments)} 个\n"
-        + (f"- 已分诊：{', '.join(triaged)}\n" if triaged else "")
-        + "\n批准后开始分析；不需要时可以忽略本次请求。"
+        "**lily-chan-bot 正在分析该 Issue...**\n\n"
+        "感谢您的反馈！AI 正在自动分析该问题，预计耗时约 10 分钟。\n\n"
+        "---\n\n"
+        f"[GitHub Action 运行记录]({RUN_URL})"
     )
     summary += "\n\n" + c.marker(
         "requested",
