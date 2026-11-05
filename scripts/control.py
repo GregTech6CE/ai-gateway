@@ -110,7 +110,7 @@ def start() -> None:
             except Exception:
                 pass
         raise SystemExit(f"dispatch did not return workflow_run_id: {result}")
-    run_url = result.get("run_url") or f"https://github.com/{b_repo}/actions/runs/{run_id}"
+    run_url = f"https://github.com/{b_repo}/actions/runs/{run_id}"
     c.set_output("comment_id", str(comment.get("id", "")))
     c.set_output("run_id", str(run_id))
     c.set_output("run_url", str(run_url))
