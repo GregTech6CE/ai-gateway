@@ -11,7 +11,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as c  # noqa: E402
-import model_pool  # noqa: E402
 import scan_out  # noqa: E402
 
 REPO = c.env("REPO")
@@ -19,12 +18,10 @@ ISSUE = str(c.env("ISSUE"))
 COMMENT_ID = c.env("COMMENT_ID", "")
 GH_RW = c.env("GH_RW_TOKEN")
 GH_RO = c.env("GH_RO_TOKEN", GH_RW)
-SELF_TOKEN = c.env("SELF_TOKEN", "")
-B_REPO = c.env("B_REPO", "")
 BOT_ENABLED = c.env("BOT_ENABLED", "true").lower()
 SNAPSHOT = c.env("SNAPSHOT_HASH", "")
 RUN_URL = c.env("RUN_URL", "")
-MODEL_KEY = c.env("MODEL_KEY_MISTRAL", "")
+DRY_RUN = c.env("DRY_RUN", "false").lower() == "true"
 
 repo_cfg = c.load_repo(REPO)
 OUTPUTS = c.ROOT / "outputs"
@@ -95,6 +92,9 @@ def stopped(reason: str) -> None:
 
 
 def main() -> None:
+    if DRY_RUN:
+        print("dry_run=true: skip write-back")
+        return
     if BOT_ENABLED == "false" or not repo_cfg.get("enabled"):
         stopped("功能已被禁用")
         return
@@ -115,6 +115,17 @@ def main() -> None:
     if (OUTPUTS / "result.json").exists():
         result = json.loads((OUTPUTS / "result.json").read_text(encoding="utf-8"))
 
+    scan = result.get("secret_scan") or {}
+    if scan.get("ok") is False or scan.get("hits"):
+        print(f"BLOCKED: supervisor secret_scan {scan}", file=sys.stderr)
+        blocked = (
+            "分析结果包含疑似敏感信息，已被拦截，未公开。维护者可在运行 artifact 中查看。\n\n"
+            + (f"[运行记录]({RUN_URL})\n\n" if RUN_URL else "")
+            + c.marker("blocked", repo=REPO, issue=ISSUE, snapshot=SNAPSHOT)
+        )
+        post(blocked)
+        sys.exit(1)
+
     if COMMENT.exists():
         text = COMMENT.read_text(encoding="utf-8")
     else:
@@ -124,7 +135,7 @@ def main() -> None:
             + c.marker("failed", repo=REPO, issue=ISSUE, snapshot=SNAPSHOT)
         )
 
-    hits = scan_out.scan_text(text, [MODEL_KEY])
+    hits = scan_out.scan_text(text)
     if hits:
         print(f"BLOCKED: {hits}", file=sys.stderr)
         blocked = (
@@ -141,8 +152,6 @@ def main() -> None:
         apply_triage(issue)
     except Exception as exc:
         print(f"triage apply failed: {exc}", file=sys.stderr)
-
-    model_pool.merge_health(SELF_TOKEN, B_REPO, OUTPUTS / "model_health.json")
 
 
 if __name__ == "__main__":

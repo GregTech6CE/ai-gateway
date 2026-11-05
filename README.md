@@ -11,5 +11,4 @@ Code repo for lily-chan-bot.
 
 DO NOT COMMIT ANY SECRETS TO THIS REPO.
 
-- `LILY_APP_PRIVATE_KEY`
 - `MODEL_KEY_*`

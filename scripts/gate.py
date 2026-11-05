@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""阶段一：校验请求、运行便宜分类器、发占位/拒绝评论。"""
+"""阶段一（B 侧只读）：校验请求、构建快照、选择模型入口。"""
 
 from __future__ import annotations
 
@@ -22,13 +22,11 @@ REPO = c.env("REPO")
 ISSUE = str(c.env("ISSUE"))
 COMMENT_ID = c.env("COMMENT_ID", "")
 EVENT = c.env("EVENT", "issues")
-GH_RO = c.env("GH_RO_TOKEN")
-GH_RW = c.env("GH_RW_TOKEN")
+GH_RO = c.env("GH_RO_TOKEN", "")
 SELF_TOKEN = c.env("SELF_TOKEN", GH_RO)
 BOT_ENABLED = c.env("BOT_ENABLED", "true").lower()
 B_REPO = c.env("B_REPO", os.environ.get("GITHUB_REPOSITORY", ""))
-RUN_URL = c.env("RUN_URL", "")
-DRY_RUN = c.env("DRY_RUN", "false").lower() == "true"
+REQUEST_ID = c.env("REQUEST_ID", "")
 
 budget = c.budgets()
 repo_cfg: dict = {}
@@ -52,6 +50,7 @@ def finish(decision: str, reason: str, **extra) -> None:
     }
     c.dump_json(INPUTS / "verdict.json", verdict)
     c.set_output("decision", decision)
+    c.set_output("reason", reason)
     for key, value in extra.items():
         if isinstance(value, (str, int)):
             c.set_output(key, str(value))
@@ -61,6 +60,10 @@ def finish(decision: str, reason: str, **extra) -> None:
 
 def parse_time(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
+
+
+def is_current(parsed: dict) -> bool:
+    return bool(REQUEST_ID) and parsed.get("request") == REQUEST_ID
 
 
 def remote_tags(repo: str) -> set[str] | None:
@@ -120,15 +123,7 @@ def main() -> None:
     pool = model_pool.load_pool(repo_cfg.get("model_pool", "shared"))
     health = model_pool.read_health(SELF_TOKEN, B_REPO)
 
-    try:
-        data = c.request("GET", "/installation/repositories?per_page=100", GH_RO)
-        repos = data.get("repositories", []) if isinstance(data, dict) else data
-        installed = {item["full_name"].lower() for item in repos}
-    except Exception as exc:
-        finish("skip", f"installation check failed: {exc}")
-    if REPO.lower() not in installed:
-        finish("skip", "repo is not covered by the App installation")
-
+    # App installation 已由 A 侧的 token 生成步骤证明；B 只读公开 A。
     try:
         if B_REPO:
             bot_repo = c.request("GET", f"/repos/{B_REPO}", SELF_TOKEN)
@@ -178,11 +173,13 @@ def main() -> None:
         if c.bot_login_matches(item.get("user") or {}, repo_cfg):
             for parsed in c.parse_markers(item.get("body") or ""):
                 markers.append((parsed, item))
-    if any(parsed["kind"] == "done" for parsed, _ in markers):
+    if any(parsed["kind"] == "done" and not is_current(parsed) for parsed, _ in markers):
         finish("skip", "already done")
-    if any(parsed["kind"] == "rejected" for parsed, _ in markers):
+    if any(parsed["kind"] == "rejected" and not is_current(parsed) for parsed, _ in markers):
         finish("skip", "already rejected")
     for parsed, item in markers:
+        if is_current(parsed):
+            continue
         if parsed["kind"] in ("requested", "running"):
             age = now - parse_time(item["created_at"])
             if age < timedelta(minutes=budget["running_stale_minutes"]):
@@ -198,7 +195,10 @@ def main() -> None:
             continue
         if not str(item.get("issue_url", "")).endswith(f"/issues/{ISSUE}"):
             continue
-        if any(p["kind"] in ("requested", "running") for p in c.parse_markers(item.get("body") or "")):
+        if any(
+            p["kind"] in ("requested", "running") and not is_current(p)
+            for p in c.parse_markers(item.get("body") or "")
+        ):
             same_issue += 1
     if same_issue >= budget["per_issue_per_hour"]:
         finish("skip", "per-issue hourly quota reached")
@@ -211,7 +211,10 @@ def main() -> None:
         1
         for item in repo_recent
         if c.bot_login_matches(item.get("user") or {}, repo_cfg)
-        and any(p["kind"] == "requested" for p in c.parse_markers(item.get("body") or ""))
+        and any(
+            p["kind"] == "requested" and not is_current(p)
+            for p in c.parse_markers(item.get("body") or "")
+        )
     )
     if repo_count >= budget["per_repo_per_day"]:
         finish("skip", "per-repo daily quota reached")
@@ -281,27 +284,9 @@ def main() -> None:
     code_refs = " ".join(refs)
     run_cache_prefix = cache_prefix(repo_cfg["code_repo"])
 
-    summary = (
-        "**lily-chan-bot 正在分析该 Issue...**\n\n"
-        "感谢您的反馈！AI 正在自动分析该问题，预计耗时约 10 分钟。\n\n"
-        "---\n\n"
-        f"[GitHub Action 运行记录]({RUN_URL})"
-    )
-    summary += "\n\n" + c.marker(
-        "requested",
-        repo=REPO,
-        issue=ISSUE,
-        snapshot=snapshot["sha256"],
-    )
-    posted = (
-        {}
-        if DRY_RUN
-        else c.request("POST", f"/repos/{REPO}/issues/{ISSUE}/comments", GH_RW, {"body": summary})
-    )
     finish(
         "proceed",
         "accepted",
-        comment_id=posted.get("id", ""),
         snapshot_hash=snapshot["sha256"],
         code_ref=snapshot["code_ref"],
         code_repo=snapshot["code_repo"],

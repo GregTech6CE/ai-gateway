@@ -22,6 +22,8 @@ REPO = c.env("REPO")
 ISSUE = str(c.env("ISSUE"))
 GH_RO = c.env("GH_RO_TOKEN", "")
 BOT_ENABLED = c.env("BOT_ENABLED", "true").lower()
+SELF_TOKEN = os.environ.get("SELF_TOKEN", "")
+B_REPO = os.environ.get("B_REPO", "")
 RERUN_PROMPT = os.environ.get("RERUN_PROMPT", "")
 
 repo_cfg = c.load_repo(REPO)
@@ -306,10 +308,8 @@ def classify_relevance(entry: dict, key: str) -> dict | None:
 
 
 def stop_requested() -> bool:
-    if not GH_RO:
-        return False
     try:
-        issue = c.request("GET", f"/repos/{REPO}/issues/{ISSUE}", GH_RO, timeout=12)
+        issue = c.request("GET", f"/repos/{REPO}/issues/{ISSUE}", "", timeout=12)
         return "bot:stop" in {item.get("name") for item in issue.get("labels", [])}
     except Exception:
         return False
@@ -503,6 +503,24 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
     return result
 
 
+def scan_outputs() -> dict:
+    model_key = os.environ.get("MODEL_KEY_MISTRAL", "")
+    hits: list[str] = []
+    for path in (ANSWER_MD, ANSWER_JSON, LOG_PATH, SUPERVISOR_LOG, RESULT_PATH):
+        if not path.exists():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        found = scan_out.scan_text(text, [model_key])
+        if found:
+            hits.append(path.name)
+            if model_key:
+                path.write_text(text.replace(model_key, "[REDACTED]"), encoding="utf-8")
+    return {"ok": not hits, "hits": hits}
+
+
 def write_result(result: dict, state: dict, attempts: int) -> None:
     payload = {
         **result,
@@ -662,7 +680,10 @@ def main() -> None:
             continue
         break
 
+    final["secret_scan"] = scan_outputs()
     write_result(final, state, attempts)
+    if SELF_TOKEN and B_REPO:
+        model_pool.merge_health(SELF_TOKEN, B_REPO, HEALTH_PATH)
     if final.get("status") == "failed":
         sys.exit(1)
 
