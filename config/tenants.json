@@ -17,18 +17,6 @@
       "app_client_id_env": "LILY_APP_CLIENT_ID",
       "bot_login": "lily-chan-bot[bot]",
       "bot_mention": "@lily-chan-bot",
-      "llm_key_env": "LLM_KEY_GT6CE_FORK",
-      "llm": {
-        "base_url_env": "LLM_BASE_URL",
-        "provider_alias": "mistral",
-        "wire_api": "chat",
-        "l1_model": "deepseek-v4-flash-1017",
-        "l1_context": 200000,
-        "l1_effort": "low",
-        "l2_model": "deepseek-v4-flash-1017",
-        "l2_context": 1048576,
-        "l2_effort": "high"
-      },
       "comment_language": "zh",
       "attach_run_link": true,
       "labels_allowlist": [
@@ -45,7 +33,8 @@
           "spam"
         ],
         "min_confidence": 0.9
-      }
+      },
+      "model_pool": "shared"
     },
     "gt6ce-org": {
       "enabled": false,
@@ -63,18 +52,6 @@
       "app_client_id_env": "GT6CE_APP_CLIENT_ID",
       "bot_login": "gt6ce-bot[bot]",
       "bot_mention": "@gt6ce-bot",
-      "llm_key_env": "LLM_KEY_GT6CE_ORG",
-      "llm": {
-        "base_url_env": "LLM_BASE_URL",
-        "provider_alias": "mistral",
-        "wire_api": "chat",
-        "l1_model": "deepseek-v4-flash-1017",
-        "l1_context": 200000,
-        "l1_effort": "low",
-        "l2_model": "deepseek-v4-flash-1017",
-        "l2_context": 1048576,
-        "l2_effort": "high"
-      },
       "comment_language": "zh",
       "attach_run_link": true,
       "labels_allowlist": [
@@ -91,7 +68,8 @@
           "spam"
         ],
         "min_confidence": 0.9
-      }
+      },
+      "model_pool": "shared"
     }
   }
 }

@@ -41,6 +41,9 @@ jobs:
   gate:
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
     outputs:
       decision: ${{ steps.gate.outputs.decision }}
       comment_id: ${{ steps.gate.outputs.comment_id }}
@@ -80,8 +83,7 @@ jobs:
           B_REPO: ${{ github.repository }}
           BOT_ENABLED: ${{ vars.BOT_ENABLED }}
           DRY_RUN: ${{ inputs.dry_run }}
-          LLM_KEY: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LLM_KEY_GT6CE_FORK || secrets.LLM_KEY_GT6CE_ORG }}
-          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          MODEL_KEY_MISTRAL: ${{ secrets.MODEL_KEY_MISTRAL }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: python scripts/gate.py
       - name: Upload gate inputs
@@ -98,6 +100,8 @@ jobs:
     if: needs.gate.outputs.decision == 'proceed'
     runs-on: ubuntu-latest
     timeout-minutes: 75
+    permissions:
+      contents: read
     # 阶段一：Required reviewers = owner；阶段二移除审批或整行。
     environment: llm
     steps:
@@ -139,8 +143,7 @@ jobs:
           ISSUE: ${{ inputs.issue }}
           GH_RO_TOKEN: ${{ steps.app_ro.outputs.token }}
           BOT_ENABLED: ${{ vars.BOT_ENABLED }}
-          LLM_KEY: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LLM_KEY_GT6CE_FORK || secrets.LLM_KEY_GT6CE_ORG }}
-          LLM_BASE_URL: ${{ vars.LLM_BASE_URL }}
+          MODEL_KEY_MISTRAL: ${{ secrets.MODEL_KEY_MISTRAL }}
         run: python scripts/agent_supervisor.py
       - name: Upload analysis outputs
         if: always()
@@ -156,6 +159,9 @@ jobs:
     if: always() && needs.gate.outputs.decision == 'proceed' && inputs.dry_run != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v4
       - name: Download analysis outputs
@@ -192,5 +198,7 @@ jobs:
           BOT_ENABLED: ${{ vars.BOT_ENABLED }}
           SNAPSHOT_HASH: ${{ needs.gate.outputs.snapshot_hash }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          LLM_KEY: ${{ inputs.tenant == 'gt6ce-fork' && secrets.LLM_KEY_GT6CE_FORK || secrets.LLM_KEY_GT6CE_ORG }}
+          MODEL_KEY_MISTRAL: ${{ secrets.MODEL_KEY_MISTRAL }}
+          SELF_TOKEN: ${{ github.token }}
+          B_REPO: ${{ github.repository }}
         run: python scripts/write_back.py

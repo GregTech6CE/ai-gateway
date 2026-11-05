@@ -7,7 +7,8 @@
 3. 把 App client id 存为变量 `LILY_APP_CLIENT_ID`。
 4. 创建 fine-grained PAT（仅本仓库 `Actions: write`），存为 fork 的 `LILY_DISPATCH_TOKEN`。
    这是 A 侧唯一的凭据。
-5. 存 `LLM_KEY_GT6CE_FORK`；设置 `LLM_BASE_URL`。
+5. 存共享池 key `MODEL_KEY_MISTRAL`；在 `config/models.json` 配置 endpoint 与 role；
+   创建变量 `MODEL_HEALTH={}`。
 6. 检查已提交的 `config/tenants.json`：只允许修改仓库名、模型 id 和 secret/env
    名称；**禁止填写任何值**。
 7. 创建 `llm` environment，Required reviewers = owner。
@@ -23,7 +24,7 @@
 ## 阶段二
 
 - 在 org 下创建私有 `gt6ce-bot` App，仅安装到 `GregTech6CE/GregTech6`。
-- 配置 `GT6CE_APP_PRIVATE_KEY`、`GT6CE_APP_CLIENT_ID`、`LLM_KEY_GT6CE_ORG`。
+- 配置 `GT6CE_APP_PRIVATE_KEY`、`GT6CE_APP_CLIENT_ID`；模型 key 仍是共享的 `MODEL_KEY_MISTRAL`。
 - 在 org 仓库添加触发 workflow 与 `LILY_DISPATCH_TOKEN`。
 - 将 `gt6ce-org.enabled` 设为 `true`，`gt6ce-fork.enabled` 设为 `false`。
 - 需要全自动时，移除 `environment: llm` 的 Required reviewers（或整行）。
@@ -45,6 +46,13 @@
 | 评论没有更新 | write-back job、App 的 `issues: write`、`bot:stop` |
 | 评论显示 blocked | `scan_out` 命中；查看 analysis artifact |
 | 超时/partial | `outputs/result.json`；partial 是预期行为 |
+
+## 模型池
+
+- endpoint 是健康单位；role 只是 l1/l2 的绑定，down 只记在 endpoint 上。
+- 401/403：冷却 15 分钟；同一 endpoint 24 小时内失败 3 次则熔断 60 分钟。
+- 429：按 `Retry-After` 冷却，上限 30 分钟；5xx：5 分钟；400/404：60 分钟。
+- 重置健康状态：`gh variable set MODEL_HEALTH --repo Tanimodori/lily-chan-bot --body '{}'`。
 
 ## 限额
 

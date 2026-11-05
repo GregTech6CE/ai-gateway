@@ -40,8 +40,7 @@ Secrets：
 |---|---|---|
 | `LILY_APP_PRIVATE_KEY` | gate、write-back | 个人 App（阶段一） |
 | `GT6CE_APP_PRIVATE_KEY` | gate、write-back | 组织 App（阶段二） |
-| `LLM_KEY_GT6CE_FORK` | gate、analysis | 按仓库独立的 LLM key（阶段一） |
-| `LLM_KEY_GT6CE_ORG` | gate、analysis | 按仓库独立的 LLM key（阶段二） |
+| `MODEL_KEY_MISTRAL` | gate、analysis | 共享模型池 key（所有 tenant 共用） |
 
 Variables：
 
@@ -49,11 +48,19 @@ Variables：
 |---|---|---|
 | `LILY_APP_CLIENT_ID` | `Iv1.xxx` | 个人 App client id |
 | `GT6CE_APP_CLIENT_ID` | `Iv1.yyy` | 组织 App client id |
-| `LLM_BASE_URL` | `https://aggregator.example/v1` | OpenAI 兼容端点 |
+| `MODEL_HEALTH` | `{}` | endpoint 健康状态 JSON（repo variable，不是 secret） |
 | `BOT_ENABLED` | `true` | 全局开关 |
 
 Environment `llm`：阶段一 Required reviewers = owner；阶段二移除审批。
 environment 只负责暂停 analysis job；LLM key 仍然是 repo secret。
+
+## 模型池
+
+- `config/models.json` 分两层：`endpoints` 是健康单位（provider + base_url + key + model），
+  `roles` 只是绑定（l1/l2 选择 endpoint、context、effort、priority）。
+- endpoint 被 401/429 打挂时，所有绑定它的 role 都不可用；role 本身不单独记状态。
+- 健康状态存在 B 的 repo variable `MODEL_HEALTH`；gate 读取并更新，write-back 合并。
+- 重置：`gh variable set MODEL_HEALTH --repo Tanimodori/lily-chan-bot --body '{}'`。
 
 ## 本地配置
 

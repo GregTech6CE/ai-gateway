@@ -1,0 +1,36 @@
+{
+  "_warning": "模型池配置。endpoint 是健康单位；role 只是绑定。只允许写名称，禁止写任何密钥。",
+  "pools": {
+    "shared": {
+      "endpoints": [
+        {
+          "id": "mistral-deepseek",
+          "provider": "mistral",
+          "base_url": "https://api.mistral.ai/v1",
+          "api_key_env": "MODEL_KEY_MISTRAL",
+          "model": "deepseek-v4-flash-1017",
+          "wire_api": "chat",
+          "enabled": true
+        }
+      ],
+      "roles": {
+        "l1": [
+          {
+            "endpoint": "mistral-deepseek",
+            "context": 200000,
+            "effort": "low",
+            "priority": 10
+          }
+        ],
+        "l2": [
+          {
+            "endpoint": "mistral-deepseek",
+            "context": 1048576,
+            "effort": "high",
+            "priority": 10
+          }
+        ]
+      }
+    }
+  }
+}

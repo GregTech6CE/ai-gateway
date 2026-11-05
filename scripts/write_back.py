@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as c  # noqa: E402
+import model_pool  # noqa: E402
 import scan_out  # noqa: E402
 
 TENANT_ID = c.env("TENANT")
@@ -18,10 +19,12 @@ ISSUE = str(c.env("ISSUE"))
 COMMENT_ID = c.env("COMMENT_ID", "")
 GH_RW = c.env("GH_RW_TOKEN")
 GH_RO = c.env("GH_RO_TOKEN", GH_RW)
+SELF_TOKEN = c.env("SELF_TOKEN", "")
+B_REPO = c.env("B_REPO", "")
 BOT_ENABLED = c.env("BOT_ENABLED", "true").lower()
 SNAPSHOT = c.env("SNAPSHOT_HASH", "")
 RUN_URL = c.env("RUN_URL", "")
-LLM_KEY = c.env("LLM_KEY", "")
+MODEL_KEY = c.env("MODEL_KEY_MISTRAL", "")
 
 tenant = c.load_tenant(TENANT_ID)
 OUTPUTS = c.ROOT / "outputs"
@@ -72,7 +75,7 @@ def main() -> None:
             + c.marker("failed", repo=REPO, issue=ISSUE, snapshot=SNAPSHOT, tenant=TENANT_ID)
         )
 
-    hits = scan_out.scan_text(text, [LLM_KEY])
+    hits = scan_out.scan_text(text, [MODEL_KEY])
     if hits:
         print(f"BLOCKED: {hits}", file=sys.stderr)
         blocked = (
@@ -84,6 +87,8 @@ def main() -> None:
         sys.exit(1)
 
     post(text)
+
+    model_pool.merge_health(SELF_TOKEN, B_REPO, OUTPUTS / "model_health.json")
 
     answer_path = OUTPUTS / "answer.json"
     if answer_path.exists() and result.get("status") == "complete":
