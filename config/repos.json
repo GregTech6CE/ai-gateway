@@ -26,9 +26,6 @@
         "process_only": [
           [
             "bug"
-          ],
-          [
-            "needs triage"
           ]
         ],
         "write_only": [
@@ -69,9 +66,6 @@
         "process_only": [
           [
             "bug"
-          ],
-          [
-            "needs triage"
           ]
         ],
         "write_only": [
