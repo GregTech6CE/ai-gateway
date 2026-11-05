@@ -31,8 +31,9 @@ def post_placeholder() -> dict:
     token = env("GH_RW_TOKEN")
     request_id = env("REQUEST_ID")
     run_url = env("RUN_URL")
+    bot_name = env("BOT_NAME", "lily-chan-bot")
     body = (
-        "**lily-chan-bot 正在分析该 Issue...**\n\n"
+        f"**{bot_name} 正在分析该 Issue...**\n\n"
         "感谢您的反馈！AI 正在自动分析该问题，预计耗时约 10 分钟。\n\n"
         "---\n\n"
         + (f"[GitHub Action 运行记录]({run_url})\n\n" if run_url else "")

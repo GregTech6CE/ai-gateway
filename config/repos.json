@@ -6,6 +6,8 @@
   "repos": {
     "tanimodori/gregtech6": {
       "enabled": true,
+      "bot_login": "lily-chan-bot[bot]",
+      "bot_mention": "@lily-chan-bot",
       "code_repo": "GregTech6CE/GregTech6",
       "code_ref_mode": "tag",
       "tag_template": "v{version}",
@@ -46,7 +48,9 @@
       }
     },
     "gregtech6ce/gregtech6": {
-      "enabled": false,
+      "enabled": true,
+      "bot_login": "gt6ce-bot[bot]",
+      "bot_mention": "@gt6ce-bot",
       "code_repo": "GregTech6CE/GregTech6",
       "code_ref_mode": "tag",
       "tag_template": "v{version}",

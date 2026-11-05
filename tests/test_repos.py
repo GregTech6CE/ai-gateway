@@ -19,9 +19,11 @@ class RepoConfigTest(unittest.TestCase):
         self.assertNotIn("issue_repo", cfg)
         self.assertNotIn("app_key_env", cfg)
 
-    def test_disabled_repo_is_still_known(self):
+    def test_org_repo_uses_its_own_bot(self):
         cfg = common.load_repo("GregTech6CE/GregTech6")
-        self.assertFalse(cfg["enabled"])
+        self.assertTrue(cfg["enabled"])
+        self.assertEqual(cfg["bot_login"], "gt6ce-bot[bot]")
+        self.assertEqual(cfg["bot_mention"], "@gt6ce-bot")
 
     def test_unknown_repo_fails_closed(self):
         with self.assertRaises(SystemExit):
