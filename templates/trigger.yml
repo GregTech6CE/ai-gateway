@@ -48,7 +48,7 @@ jobs:
               --arg i "${{ github.event.issue.number }}" \
               --arg e "${{ github.event_name }}" \
               --arg c "${{ github.event.comment.id }}" \
-              '{ref:"main",inputs:{tenant:$t,repo:$r,issue:($i|tostring),event:$e,comment_id:($c // "")}}')")
+              '{ref:"branch",inputs:{tenant:$t,repo:$r,issue:($i|tostring),event:$e,comment_id:($c // "")}}')")
           if [ "$code" != "204" ]; then
             echo "dispatch failed: HTTP $code"
             cat /tmp/dispatch.json || true
