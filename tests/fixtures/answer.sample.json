@@ -1,0 +1,26 @@
+{
+  "issue_type": "crash",
+  "conclusion": "配方注册阶段对空物品栈解引用，导致崩溃。",
+  "root_cause": "注册表在材料替换后仍持有旧 ItemStack 引用。",
+  "confidence": "medium",
+  "evidence": [
+    {
+      "summary": "崩溃顶部帧位于配方注册",
+      "file": "core/src/main/java/gregtech/api/recipe/RecipeMap.java",
+      "line_start": 120,
+      "line_stop": 138
+    },
+    {
+      "summary": "latest.log 中的空指针异常",
+      "ref": "logs/latest.log:456"
+    }
+  ],
+  "fix_plan": [
+    "在替换材料前复制 ItemStack。",
+    "为注册阶段增加空值保护并补充回归用例。"
+  ],
+  "affected_versions": ["1.21.1 NeoForge"],
+  "labels": ["crash", "1.21.1"],
+  "partial": false,
+  "notes": ""
+}
