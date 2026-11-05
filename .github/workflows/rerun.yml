@@ -108,16 +108,18 @@ jobs:
           if [ -d .cache/gt6.git ]; then
             git -C .cache/gt6.git remote set-url origin "https://github.com/$CODE_REPO.git"
             git -C .cache/gt6.git fetch --prune --tags
+            rm -rf .cache/gt6.git/code
             git -C .cache/gt6.git worktree prune
           else
             git clone --mirror "https://github.com/$CODE_REPO.git" .cache/gt6.git
           fi
-          mkdir -p code
+          worktree_root="$PWD/code"
+          mkdir -p "$worktree_root"
           primary=""
           for ref in $CODE_REFS; do
             slug=$(printf '%s' "$ref" | tr '/ ' '__')
-            git -C .cache/gt6.git worktree add -f "code/$slug" "$ref" || \
-              git -C .cache/gt6.git worktree add -f "code/$slug" master
+            git -C .cache/gt6.git worktree add -f "$worktree_root/$slug" "$ref" || \
+              git -C .cache/gt6.git worktree add -f "$worktree_root/$slug" master
             if [ -z "$primary" ]; then primary="$slug"; fi
           done
           ln -sfn "$primary" code/current
