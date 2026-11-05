@@ -33,7 +33,16 @@ ANSWER_MD = OUTPUTS / "answer.md"
 ANSWER_JSON = OUTPUTS / "answer.json"
 RESULT_PATH = OUTPUTS / "result.json"
 HEALTH_PATH = OUTPUTS / "model_health.json"
+SUPERVISOR_LOG = OUTPUTS / "supervisor.log"
 REQUIRED = ("issue_type", "conclusion", "confidence", "evidence", "fix_plan", "labels", "partial")
+
+
+def log_event(event: str, **fields) -> None:
+    record = {"ts": datetime.now(timezone.utc).isoformat(), "event": event, **fields}
+    line = json.dumps(record, ensure_ascii=False)
+    with open(SUPERVISOR_LOG, "a", encoding="utf-8") as fh:
+        fh.write(line + "\n")
+    print(line, flush=True)
 
 
 def validate_answer() -> bool:
@@ -120,6 +129,10 @@ def last_exec_command(text: str) -> str:
     return ""
 
 
+def count_exec(text: str) -> int:
+    return sum(1 for line in text.splitlines() if line.strip() == "exec")
+
+
 def stop_requested() -> bool:
     if not GH_RO:
         return False
@@ -142,12 +155,22 @@ def parse_tokens(text: str) -> int:
 
 
 def classify_log(text: str) -> model_pool.ModelError | None:
-    lowered = text.lower()
-    if "401" in lowered or "unauthorized" in lowered or "invalid api key" in lowered:
+    error_lines = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        lowered = stripped.lower()
+        if not lowered.startswith(("error", "failed", "http")):
+            continue
+        if any(marker in lowered for marker in ("error", "failed", "http", "unauthorized", "invalid api key", "rate limit", "too many requests", "model not found", "does not exist")):
+            error_lines.append(lowered)
+    if not error_lines:
+        return None
+    joined = "\n".join(error_lines)
+    if "401" in joined or "unauthorized" in joined or "invalid api key" in joined:
         return model_pool.ModelError("auth", 401, 0, "codex log")
-    if "429" in lowered or "rate limit" in lowered or "too many requests" in lowered:
+    if "429" in joined or "rate limit" in joined or "too many requests" in joined:
         return model_pool.ModelError("rate", 429, 0, "codex log")
-    if "404" in lowered or "model not found" in lowered or "does not exist" in lowered:
+    if "404" in joined or "model not found" in joined or "does not exist" in joined:
         return model_pool.ModelError("config", 404, 0, "codex log")
     return None
 
@@ -160,7 +183,7 @@ def archive_attempt(number: int) -> None:
             path.replace(target / path.name)
 
 
-def run_codex(entry: dict, key: str, deadline: float) -> dict:
+def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
     prompt = build_prompt()
     (OUTPUTS / "prompt.txt").write_text(prompt, encoding="utf-8")
     env = os.environ.copy()
@@ -174,6 +197,17 @@ def run_codex(entry: dict, key: str, deadline: float) -> dict:
     started = time.monotonic()
     reason = "completed"
     turns = 0
+    log_event(
+        "attempt_start",
+        attempt=attempt,
+        entry=entry["id"],
+        model=entry["model"],
+        context=entry.get("context"),
+        effort=entry.get("effort"),
+        wire_api=entry.get("wire_api"),
+        timeout_minutes=timeout_minutes,
+        loop_threshold=threshold,
+    )
 
     with open(LOG_PATH, "w", encoding="utf-8", errors="replace") as log:
         proc = subprocess.Popen(
@@ -184,30 +218,67 @@ def run_codex(entry: dict, key: str, deadline: float) -> dict:
             cwd=str(c.ROOT),
             start_new_session=True,
         )
+        log_event("codex_start", attempt=attempt, pid=proc.pid, prompt_chars=len(prompt))
         last_check = 0.0
-        last_command = ""
+        last_heartbeat = 0.0
+        seen_exec = 0
+        last_started_command = ""
+        last_answer_size = -1
         repeats = 0
         try:
             while proc.poll() is None:
                 time.sleep(1)
                 if time.monotonic() > deadline:
                     reason = f"timeout {timeout_minutes}min"
+                    log_event("timeout", attempt=attempt, elapsed_sec=round(time.monotonic() - started, 1))
                     break
                 if time.monotonic() - last_check >= 5:
                     text = read_log()
                     turns = count_turns(text)
-                    command = last_exec_command(text)
-                    if command and command == last_command:
-                        repeats += 1
-                    else:
-                        repeats = 0
-                        last_command = command
+                    execs = count_exec(text)
+                    answer_size = ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0
+                    if execs > seen_exec:
+                        command = last_exec_command(text)
+                        if command and command == last_started_command and answer_size == last_answer_size:
+                            repeats += 1
+                        else:
+                            repeats = 0
+                        last_started_command = command
+                        last_answer_size = answer_size
+                        seen_exec = execs
+                        log_event(
+                            "exec",
+                            attempt=attempt,
+                            exec_count=execs,
+                            repeats=repeats,
+                            answer_md_bytes=answer_size,
+                            command=command[:240],
+                        )
                     if threshold and repeats >= threshold:
-                        reason = f"loop detected ({threshold}x same command)"
+                        reason = f"loop detected ({threshold}x same command without progress)"
+                        log_event(
+                            "loop_detected",
+                            attempt=attempt,
+                            repeats=repeats,
+                            command=last_started_command[:240],
+                        )
                         break
+                    if time.monotonic() - last_heartbeat >= 30:
+                        log_event(
+                            "heartbeat",
+                            attempt=attempt,
+                            elapsed_sec=round(time.monotonic() - started, 1),
+                            turns=turns,
+                            exec_count=execs,
+                            answer_md_bytes=answer_size,
+                            answer_json=ANSWER_JSON.exists(),
+                            repeats=repeats,
+                        )
+                        last_heartbeat = time.monotonic()
                     last_check = time.monotonic()
                 if int(time.monotonic() - started) % 60 == 0 and stop_requested():
                     reason = "bot:stop label"
+                    log_event("bot_stop", attempt=attempt)
                     break
         finally:
             if proc.poll() is None:
@@ -237,7 +308,7 @@ def run_codex(entry: dict, key: str, deadline: float) -> dict:
         status = "failed"
     if reason != "completed":
         status = "partial" if status in ("complete", "partial") else "failed"
-    return {
+    result = {
         "status": status,
         "reason": reason,
         "turns": turns,
@@ -246,6 +317,14 @@ def run_codex(entry: dict, key: str, deadline: float) -> dict:
         "exit_code": code,
         "entry_id": entry["id"],
     }
+    log_event(
+        "attempt_end",
+        attempt=attempt,
+        **result,
+        answer_md_bytes=ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0,
+        answer_json=ANSWER_JSON.exists(),
+    )
+    return result
 
 
 def write_result(result: dict, state: dict, attempts: int) -> None:
@@ -256,10 +335,18 @@ def write_result(result: dict, state: dict, attempts: int) -> None:
     }
     c.dump_json(RESULT_PATH, payload)
     c.dump_json(HEALTH_PATH, state)
+    log_event("result", **payload)
     print(json.dumps(payload, ensure_ascii=False))
 
 
 def main() -> None:
+    log_event(
+        "supervisor_start",
+        repo=REPO,
+        issue=ISSUE,
+        bot_enabled=BOT_ENABLED,
+        repo_enabled=bool(repo_cfg.get("enabled")),
+    )
     if BOT_ENABLED == "false":
         write_result({"status": "failed", "reason": "BOT_ENABLED=false"}, {"endpoints": {}}, 0)
         return
@@ -269,12 +356,13 @@ def main() -> None:
     model_path = c.ROOT / "inputs/model.json"
     if not model_path.exists():
         write_result({"status": "failed", "reason": "inputs/model.json missing"}, {"endpoints": {}}, 0)
-        return
+        sys.exit(1)
     model = json.loads(model_path.read_text(encoding="utf-8"))
     entries = model.get("analysis_entries") or []
+    log_event("analysis_entries", pool=model.get("pool"), count=len(entries), entries=[item.get("id") for item in entries])
     if not entries:
         write_result({"status": "failed", "reason": "no healthy L2 entry"}, {"endpoints": {}}, 0)
-        return
+        sys.exit(1)
 
     deadline = time.monotonic() + int(budget["l2"]["timeout_minutes"]) * 60
     state: dict = {"endpoints": {}}
@@ -284,22 +372,47 @@ def main() -> None:
     for entry in entries:
         key = model_pool.key_for(entry)
         if not key:
+            log_event("missing_api_key", entry=entry["id"], api_key_env=entry.get("api_key_env"))
             model_pool.mark_failure(
                 state, entry, model_pool.ModelError("auth", 0, 0, "missing key"), pool_cfg
             )
             continue
         attempts += 1
         archive_attempt(attempts)
+        log_event("attempt_archive", attempt=attempts, entry=entry["id"])
+        probe_started = time.monotonic()
         try:
             model_pool.probe(entry, key, pool_cfg)
+            log_event(
+                "probe_ok",
+                attempt=attempts,
+                entry=entry["id"],
+                elapsed_ms=round((time.monotonic() - probe_started) * 1000),
+            )
         except model_pool.ModelError as exc:
+            log_event(
+                "probe_error",
+                attempt=attempts,
+                entry=entry["id"],
+                kind=exc.kind,
+                status=exc.status,
+            )
             model_pool.mark_failure(state, entry, exc, pool_cfg)
             if exc.kind in ("rate", "upstream", "network") and time.monotonic() < deadline - 120:
                 wait = min(max(int(exc.retry_after or 15), 5), 60)
+                log_event("probe_retry", attempt=attempts, wait_sec=wait, kind=exc.kind)
                 time.sleep(wait)
                 try:
                     model_pool.preflight(entry, key, pool_cfg)
+                    log_event("probe_retry_ok", attempt=attempts, entry=entry["id"])
                 except model_pool.ModelError as second:
+                    log_event(
+                        "probe_retry_error",
+                        attempt=attempts,
+                        entry=entry["id"],
+                        kind=second.kind,
+                        status=second.status,
+                    )
                     model_pool.mark_failure(state, entry, second, pool_cfg)
                     final = {**final, "reason": f"probe: {second.kind}", "entry_id": entry["id"]}
                     continue
@@ -307,13 +420,21 @@ def main() -> None:
                 final = {**final, "reason": f"probe: {exc.kind}", "entry_id": entry["id"]}
                 continue
 
-        result = run_codex(entry, key, deadline)
+        result = run_codex(entry, key, deadline, attempts)
         final = result
         if result["status"] == "complete":
             model_pool.mark_success(state, entry)
+            log_event("entry_success", attempt=attempts, entry=entry["id"])
             break
         error = classify_log(read_log())
         if error:
+            log_event(
+                "codex_error",
+                attempt=attempts,
+                entry=entry["id"],
+                kind=error.kind,
+                status=error.status,
+            )
             model_pool.mark_failure(state, entry, error, pool_cfg)
             if not bool(pool_cfg.get("analysis_retry_once", True)):
                 break
@@ -323,6 +444,8 @@ def main() -> None:
         break
 
     write_result(final, state, attempts)
+    if final.get("status") == "failed":
+        sys.exit(1)
 
 
 if __name__ == "__main__":
