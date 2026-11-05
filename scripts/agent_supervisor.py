@@ -125,11 +125,26 @@ def validate_answer() -> bool:
     return True
 
 
+def prompt_text(kind: str) -> str:
+    common_path = c.ROOT / "prompts" / "common" / f"{kind}.md"
+    base = common_path.read_text(encoding="utf-8").rstrip()
+    profile = str(repo_cfg.get("prompt_profile") or "").strip().lower()
+    if not profile:
+        return base
+    if not re.fullmatch(r"[a-z0-9_-]+", profile):
+        raise SystemExit(f"invalid prompt_profile: {profile}")
+    overlay_path = c.ROOT / "prompts" / "repos" / profile / f"{kind}.md"
+    if overlay_path.exists():
+        overlay = overlay_path.read_text(encoding="utf-8").strip()
+        return f"{base}\n\n## 仓库特定规则（优先于 common）\n\n{overlay}\n"
+    return base
+
+
 def build_prompt() -> str:
     if RERUN_PROMPT:
         return RERUN_PROMPT
-    skill = (c.ROOT / "prompts/analyze.md").read_text(encoding="utf-8")
-    nodes = (c.ROOT / "prompts/nodes.md").read_text(encoding="utf-8")
+    skill = prompt_text("analyze")
+    nodes = prompt_text("nodes")
     return (
         f"{skill}\n\n{nodes}\n\n"
         f"目标 issue：{REPO}#{ISSUE}\n"
@@ -250,7 +265,7 @@ def relevance_text() -> str:
 def classify_relevance(entry: dict, key: str) -> dict | None:
     if not key:
         return None
-    prompt = (c.ROOT / "prompts/relevance.md").read_text(encoding="utf-8")
+    prompt = prompt_text("relevance")
     text = relevance_text()
     if not text:
         return None

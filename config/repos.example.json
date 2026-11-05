@@ -18,6 +18,7 @@
         "min_confidence": 0.9
       },
       "model_pool": "shared",
+      "prompt_profile": "example",
       "extra_code_refs": [],
       "triage": {
         "process_only": [
