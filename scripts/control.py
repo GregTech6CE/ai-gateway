@@ -47,7 +47,13 @@ def precheck(repo: str, issue: str, token: str) -> tuple[str, str]:
     if not repo_cfg.get("enabled"):
         return "repo disabled", ""
     data = api("GET", f"/repos/{repo}/issues/{issue}", token)
-    title = " ".join(str(data.get("title") or "").split())[:120]
+    title = ""
+    try:
+        repo_data = api("GET", f"/repos/{repo}", token)
+        if not repo_data.get("private"):
+            title = " ".join(str(data.get("title") or "").split())[:120]
+    except Exception:
+        title = ""
     if data.get("pull_request"):
         return "pull request, not an issue", title
     if data.get("state") != "open":
