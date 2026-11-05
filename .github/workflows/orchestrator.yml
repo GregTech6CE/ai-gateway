@@ -40,7 +40,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: lily-${{ inputs.repo }}-${{ inputs.issue }}
+  group: gt6ce-${{ inputs.repo }}-${{ inputs.issue }}
   cancel-in-progress: false
 
 jobs:
@@ -90,7 +90,6 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
-    # 阶段一：Required reviewers = owner；阶段二移除审批或整行。
     environment: llm
     steps:
       - uses: actions/checkout@v4
@@ -148,14 +147,6 @@ jobs:
           BOT_ENABLED: ${{ vars.BOT_ENABLED }}
           MODEL_KEY_MISTRAL: ${{ secrets.MODEL_KEY_MISTRAL }}
         run: python scripts/agent_supervisor.py
-      - name: Update model health
-        if: always()
-        continue-on-error: true
-        env:
-          MODEL_HEALTH_TOKEN: ${{ secrets.MODEL_HEALTH_TOKEN }}
-          B_REPO: ${{ github.repository }}
-          MODEL_HEALTH_PATH: outputs/model_health.json
-        run: python scripts/update_health.py
       - name: Upload analysis outputs
         if: always()
         uses: actions/upload-artifact@v4
@@ -164,3 +155,110 @@ jobs:
           path: outputs/
           if-no-files-found: ignore
           retention-days: 30
+
+  # 确定性写入。不运行 agent，不读 issue 正文作为指令，只消费 gate/analysis 的结构化产物。
+  # 除 dry_run 的写回外，finalize 总是运行：analysis 失败、超时或被取消都要回写失败结论。
+  finalize:
+    needs: [gate, analysis]
+    if: always() && needs.gate.result != 'skipped'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: read
+    environment: writer
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download gate inputs
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: gate-${{ github.run_id }}
+          path: inputs
+      - name: Download analysis outputs
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: analysis-${{ github.run_id }}
+          path: outputs
+      - name: App token (issues:write on issue repository)
+        id: app_issue
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.GT6CE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GT6CE_APP_PRIVATE_KEY }}
+          owner: GregTech6CE
+          repositories: GregTech6
+          permission-issues: write
+      # actions/create-github-app-token 没有 permission-variables 输入，
+      # 这里使用 App 的完整权限集；该 job 不运行 agent，也不接触不可信正文。
+      - name: App token (health variable)
+        id: app_health
+        uses: actions/create-github-app-token@v3
+        with:
+          client-id: ${{ vars.GT6CE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.GT6CE_APP_PRIVATE_KEY }}
+      - name: Render
+        if: always()
+        continue-on-error: true
+        env:
+          REPO: ${{ inputs.repo }}
+          ISSUE: ${{ inputs.issue }}
+          DRY_RUN: ${{ inputs.dry_run || 'false' }}
+          B_RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ ! -f outputs/result.json ]; then
+            if [ -f inputs/verdict.json ] && ! python -c 'import json,sys;sys.exit(0 if json.load(open("inputs/verdict.json")).get("decision")=="proceed" else 1)'; then
+              echo "gate skipped; no analysis result"
+              exit 0
+            fi
+          fi
+          SNAPSHOT=$(python -c 'import json;print(json.load(open("inputs/snapshot.json")).get("sha256",""))' 2>/dev/null || true)
+          TITLE=$(python -c 'import json;print(json.load(open("inputs/snapshot.json")).get("issue",{}).get("title",""))' 2>/dev/null || true)
+          STATUS=$(python -c 'import json;print(json.load(open("outputs/result.json")).get("status","failed"))' 2>/dev/null || echo failed)
+          REASON=$(python -c 'import json;print(json.load(open("outputs/result.json")).get("reason",""))' 2>/dev/null || true)
+          python scripts/render.py \
+            --repo "$REPO" --issue "$ISSUE" \
+            --issue-title "$TITLE" --snapshot "$SNAPSHOT" \
+            --relevance outputs/relevance.json \
+            --run-url "$B_RUN_URL" \
+            --status "$STATUS" --reason "$REASON"
+      - name: Cleanup skipped placeholder
+        if: ${{ always() && (inputs.dry_run || 'false') != 'true' }}
+        continue-on-error: true
+        env:
+          REPO: ${{ inputs.repo }}
+          ISSUE: ${{ inputs.issue }}
+          COMMENT_ID: ${{ inputs.comment_id }}
+          GH_RW_TOKEN: ${{ steps.app_issue.outputs.token }}
+        run: |
+          set -euo pipefail
+          if [ -f outputs/result.json ]; then exit 0; fi
+          if [ -f inputs/verdict.json ] && ! python -c 'import json,sys;sys.exit(0 if json.load(open("inputs/verdict.json")).get("decision")=="proceed" else 1)'; then
+            python scripts/control.py cleanup
+          fi
+      - name: Write back
+        if: ${{ always() && (inputs.dry_run || 'false') != 'true' }}
+        continue-on-error: true
+        env:
+          REPO: ${{ inputs.repo }}
+          ISSUE: ${{ inputs.issue }}
+          COMMENT_ID: ${{ inputs.comment_id }}
+          GH_RW_TOKEN: ${{ steps.app_issue.outputs.token }}
+          GH_RO_TOKEN: ${{ steps.app_issue.outputs.token }}
+          BOT_ENABLED: ${{ vars.BOT_ENABLED }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          if [ ! -f outputs/comment.md ]; then exit 0; fi
+          SNAPSHOT=$(python -c 'import json;print(json.load(open("inputs/snapshot.json")).get("sha256",""))' 2>/dev/null || true)
+          SNAPSHOT_HASH="$SNAPSHOT" python scripts/write_back.py
+      - name: Update model health
+        if: always()
+        continue-on-error: true
+        env:
+          MODEL_HEALTH_TOKEN: ${{ steps.app_health.outputs.token }}
+          B_REPO: ${{ github.repository }}
+          MODEL_HEALTH_PATH: outputs/model_health.json
+        run: python scripts/update_health.py

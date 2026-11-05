@@ -1,6 +1,6 @@
-# lily-chan-bot
+# ai-gateway
 
-Code repo for lily-chan-bot.
+GT6CE issue bot 的执行与分析仓库。设计与决策见治理仓库，本仓库只保留最小说明。
 
 ## managed repos
 
@@ -11,5 +11,5 @@ Code repo for lily-chan-bot.
 
 DO NOT COMMIT ANY SECRETS TO THIS REPO.
 
-- `MODEL_KEY_*`
-- `MODEL_HEALTH_TOKEN`
+- `llm` environment: `MODEL_KEY_MISTRAL`
+- `writer` environment: `GT6CE_APP_PRIVATE_KEY`

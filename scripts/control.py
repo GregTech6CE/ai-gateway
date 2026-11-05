@@ -74,7 +74,7 @@ def start() -> None:
     comment_id = env("COMMENT_ID")
     request_id = env("REQUEST_ID")
     dry_run = env("DRY_RUN", "false").lower() == "true"
-    b_repo = env("B_REPO", "Tanimodori/lily-chan-bot")
+    b_repo = env("B_REPO", "GregTech6CE/ai-gateway")
     b_pat = env("B_PAT")
     if not b_pat:
         raise SystemExit("B_PAT missing")
@@ -215,7 +215,7 @@ def download_artifact(b_repo: str, pat: str, artifact: dict, target: Path, prefi
 
 
 def finish() -> None:
-    b_repo = env("B_REPO", "Tanimodori/lily-chan-bot")
+    b_repo = env("B_REPO", "GregTech6CE/ai-gateway")
     pat = env("B_PAT")
     run_id = env("RUN_ID")
     if not pat or not run_id:
