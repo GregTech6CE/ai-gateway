@@ -7,7 +7,7 @@
           "provider": "mistral",
           "base_url": "https://api.mistral.ai/v1",
           "api_key_env": "MODEL_KEY_MISTRAL",
-          "model": "deepseek-v4-flash-1017",
+          "model": "deepseek-v4-1-flash-1017",
           "wire_api": "chat",
           "enabled": true
         }
