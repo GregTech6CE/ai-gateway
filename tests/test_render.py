@@ -1,11 +1,13 @@
 import json
 import sys
+import tempfile
 import unittest
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import model_pool  # noqa: E402
 import render  # noqa: E402
 import scan_out  # noqa: E402
 
@@ -103,6 +105,14 @@ class RenderTest(unittest.TestCase):
     def test_scan_blocks_pem(self):
         hits = scan_out.scan_text("-----BEGIN PRIVATE KEY-----")
         self.assertTrue(hits)
+
+    def test_health_file_roundtrip(self):
+        state = {"endpoints": {"mistral-deepseek": {"status": "ok"}}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "model_health.json"
+            model_pool.write_health_file(path, state)
+            self.assertEqual(model_pool.read_health_file(path), state)
+            self.assertEqual(model_pool.read_health_file(Path(directory) / "missing.json"), {})
 
 
 if __name__ == "__main__":

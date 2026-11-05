@@ -12,3 +12,4 @@ Code repo for lily-chan-bot.
 DO NOT COMMIT ANY SECRETS TO THIS REPO.
 
 - `MODEL_KEY_*`
+- `MODEL_HEALTH_TOKEN`

@@ -22,8 +22,6 @@ REPO = c.env("REPO")
 ISSUE = str(c.env("ISSUE"))
 GH_RO = c.env("GH_RO_TOKEN", "")
 BOT_ENABLED = c.env("BOT_ENABLED", "true").lower()
-SELF_TOKEN = os.environ.get("SELF_TOKEN", "")
-B_REPO = os.environ.get("B_REPO", "")
 RERUN_PROMPT = os.environ.get("RERUN_PROMPT", "")
 
 repo_cfg = c.load_repo(REPO)
@@ -566,7 +564,7 @@ def main() -> None:
         sys.exit(1)
 
     deadline = time.monotonic() + int(budget["l2"]["timeout_minutes"]) * 60
-    state: dict = {"endpoints": {}}
+    state: dict = model_pool.read_health_file(c.ROOT / "inputs/model_health.json")
     attempts = 0
     final: dict = {"status": "failed", "reason": "no attempt", "turns": 0, "elapsed_sec": 0, "tokens": 0, "exit_code": 0, "entry_id": ""}
 
@@ -682,8 +680,6 @@ def main() -> None:
 
     final["secret_scan"] = scan_outputs()
     write_result(final, state, attempts)
-    if SELF_TOKEN and B_REPO:
-        model_pool.merge_health(SELF_TOKEN, B_REPO, HEALTH_PATH)
     if final.get("status") == "failed":
         sys.exit(1)
 

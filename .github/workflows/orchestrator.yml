@@ -43,7 +43,7 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
-      actions: write
+      actions: read
     outputs:
       decision: ${{ steps.gate.outputs.decision }}
       reason: ${{ steps.gate.outputs.reason }}
@@ -66,6 +66,7 @@ jobs:
           SELF_TOKEN: ${{ github.token }}
           B_REPO: ${{ github.repository }}
           BOT_ENABLED: ${{ vars.BOT_ENABLED }}
+          MODEL_HEALTH: ${{ vars.MODEL_HEALTH }}
         run: python scripts/gate.py
       - name: Upload gate inputs
         if: always()
@@ -83,7 +84,6 @@ jobs:
     timeout-minutes: 75
     permissions:
       contents: read
-      actions: write
     # 阶段一：Required reviewers = owner；阶段二移除审批或整行。
     environment: llm
     steps:
@@ -141,9 +141,15 @@ jobs:
           ISSUE: ${{ inputs.issue }}
           BOT_ENABLED: ${{ vars.BOT_ENABLED }}
           MODEL_KEY_MISTRAL: ${{ secrets.MODEL_KEY_MISTRAL }}
-          SELF_TOKEN: ${{ github.token }}
-          B_REPO: ${{ github.repository }}
         run: python scripts/agent_supervisor.py
+      - name: Update model health
+        if: always()
+        continue-on-error: true
+        env:
+          MODEL_HEALTH_TOKEN: ${{ secrets.MODEL_HEALTH_TOKEN }}
+          B_REPO: ${{ github.repository }}
+          MODEL_HEALTH_PATH: outputs/model_health.json
+        run: python scripts/update_health.py
       - name: Upload analysis outputs
         if: always()
         uses: actions/upload-artifact@v4

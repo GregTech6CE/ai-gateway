@@ -121,7 +121,12 @@ def main() -> None:
         finish("skip", f"unknown event: {EVENT}")
 
     pool = model_pool.load_pool(repo_cfg.get("model_pool", "shared"))
-    health = model_pool.read_health(SELF_TOKEN, B_REPO)
+    raw_health = os.environ.get("MODEL_HEALTH", "").strip()
+    try:
+        health = json.loads(raw_health) if raw_health else {}
+    except Exception:
+        health = {}
+    c.dump_json(INPUTS / "model_health.json", health)
 
     # App installation 已由 A 侧的 token 生成步骤证明；B 只读公开 A。
     try:

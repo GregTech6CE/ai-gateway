@@ -18,7 +18,6 @@ from pathlib import Path
 import common as c
 
 POOL_PATH = c.ROOT / "config/models.json"
-STATE_VAR = "MODEL_HEALTH"
 
 
 class ModelError(RuntimeError):
@@ -78,34 +77,19 @@ def entries(pool: dict, role: str) -> list[dict]:
     return bindings(pool, role)
 
 
-def read_health(token: str, repo: str) -> dict:
-    if not token or not repo:
+def read_health_file(path: str | Path) -> dict:
+    path = Path(path)
+    if not path.exists():
         return {}
     try:
-        data = c.request("GET", f"/repos/{repo}/actions/variables/{STATE_VAR}", token)
-        return json.loads(data.get("value") or "{}")
-    except Exception as exc:
-        if "-> 404" in str(exc):
-            return {}
-        print(f"读取模型健康状态失败: {exc}")
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
         return {}
 
 
-def write_health(token: str, repo: str, state: dict) -> None:
-    if not token or not repo:
-        return
-    body = {"name": STATE_VAR, "value": json.dumps(state, ensure_ascii=False)}
-    try:
-        c.request("PATCH", f"/repos/{repo}/actions/variables/{STATE_VAR}", token, body)
-    except Exception as exc:
-        if "-> 404" in str(exc):
-            try:
-                c.request("POST", f"/repos/{repo}/actions/variables", token, body)
-                return
-            except Exception as inner:
-                print(f"创建模型健康状态失败: {inner}")
-                return
-        print(f"写入模型健康状态失败: {exc}")
+def write_health_file(path: str | Path, state: dict) -> None:
+    c.dump_json(path, state)
 
 
 def _endpoint_state(state: dict, endpoint_id: str) -> dict:
@@ -275,15 +259,3 @@ def failover_chat(
     raise last or ModelError("unavailable", 0, 0, f"no healthy entry for {role}")
 
 
-def merge_health(token: str, repo: str, path: str | Path) -> None:
-    path = Path(path)
-    if not path.exists():
-        return
-    try:
-        delta = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return
-    state = read_health(token, repo)
-    for endpoint_id, patch in (delta.get("endpoints") or {}).items():
-        state.setdefault("endpoints", {}).setdefault(endpoint_id, {}).update(patch)
-    write_health(token, repo, state)
