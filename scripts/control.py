@@ -233,10 +233,12 @@ def finish() -> None:
         except Exception:
             verdict = {}
     result_path = out / "outputs/result.json"
-    if not result_path.exists() and verdict.get("decision") == "proceed":
-        fallback = fallback_result(run_id, run)
-        c.dump_json(result_path, fallback)
-        print(json.dumps({"result_fallback": fallback}, ensure_ascii=False))
+    if not result_path.exists():
+        decision = verdict.get("decision")
+        if decision == "proceed" or (not verdict and run.get("conclusion") != "success"):
+            fallback = fallback_result(run_id, run)
+            c.dump_json(result_path, fallback)
+            print(json.dumps({"result_fallback": fallback}, ensure_ascii=False))
     print(
         json.dumps(
             {
