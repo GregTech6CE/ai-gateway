@@ -18,7 +18,11 @@ on:
         required: false
         type: string
       comment_id:
-        description: 触发评论 id（issue_comment 事件）
+        description: 触发评论 id（issue_comment 事件，用于 gate 校验）
+        required: false
+        type: string
+      placeholder_comment_id:
+        description: A 侧占位评论 id，finalize 用它 PATCH 最终结论
         required: false
         type: string
       event:
@@ -231,7 +235,7 @@ jobs:
         env:
           REPO: ${{ inputs.repo }}
           ISSUE: ${{ inputs.issue }}
-          COMMENT_ID: ${{ inputs.comment_id }}
+          COMMENT_ID: ${{ inputs.placeholder_comment_id }}
           GH_RW_TOKEN: ${{ steps.app_issue.outputs.token }}
         run: |
           set -euo pipefail
@@ -245,7 +249,7 @@ jobs:
         env:
           REPO: ${{ inputs.repo }}
           ISSUE: ${{ inputs.issue }}
-          COMMENT_ID: ${{ inputs.comment_id }}
+          COMMENT_ID: ${{ inputs.placeholder_comment_id }}
           GH_RW_TOKEN: ${{ steps.app_issue.outputs.token }}
           GH_RO_TOKEN: ${{ steps.app_issue.outputs.token }}
           BOT_ENABLED: ${{ vars.BOT_ENABLED }}

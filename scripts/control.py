@@ -93,6 +93,7 @@ def start() -> None:
             "issue_title": issue_title,
             "event": event,
             "comment_id": comment_id,
+            "placeholder_comment_id": str(comment.get("id", "")),
             "dry_run": "true" if dry_run else "false",
             "request_id": request_id,
         },
