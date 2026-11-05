@@ -134,7 +134,18 @@ def wait_run(b_repo: str, pat: str, run_id: str) -> dict:
     timeout = int(env("TIMEOUT_MINUTES", "90")) * 60
     deadline = time.monotonic() + timeout
     while True:
-        run = api("GET", f"/repos/{b_repo}/actions/runs/{run_id}", pat)
+        try:
+            run = api("GET", f"/repos/{b_repo}/actions/runs/{run_id}", pat)
+        except Exception as exc:
+            message = str(exc)
+            if any(code in message for code in ("-> 401:", "-> 403:", "-> 404:")):
+                raise
+            print(f"poll failed: {exc}", file=sys.stderr)
+            if time.monotonic() > deadline:
+                print(f"B run {run_id} timeout after {timeout // 60} minutes")
+                return {"status": "timeout", "conclusion": "timed_out"}
+            time.sleep(20)
+            continue
         status = run.get("status")
         conclusion = run.get("conclusion")
         print(f"B run {run_id}: status={status} conclusion={conclusion}")
