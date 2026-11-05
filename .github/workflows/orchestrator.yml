@@ -49,13 +49,26 @@ jobs:
       code_refs: ${{ steps.gate.outputs.code_refs }}
       cache_prefix: ${{ steps.gate.outputs.cache_prefix }}
       issue_title: ${{ steps.gate.outputs.issue_title }}
+      target_owner: ${{ steps.target.outputs.owner }}
+      target_repo: ${{ steps.target.outputs.name }}
     steps:
       - uses: actions/checkout@v4
+      - name: Parse target repo
+        id: target
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+        run: |
+          owner="${TARGET_REPO%%/*}"
+          name="${TARGET_REPO#*/}"
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
       # TODO：正式启用前把第三方 action pin 到完整 commit SHA。
       - name: App token (read)
         id: app_ro
         uses: actions/create-github-app-token@v3
         with:
+          owner: ${{ steps.target.outputs.owner }}
+          repositories: ${{ steps.target.outputs.name }}
           client-id: ${{ vars.LILY_APP_CLIENT_ID }}
           private-key: ${{ secrets.LILY_APP_PRIVATE_KEY }}
           permission-issues: read
@@ -64,6 +77,8 @@ jobs:
         id: app_rw
         uses: actions/create-github-app-token@v3
         with:
+          owner: ${{ steps.target.outputs.owner }}
+          repositories: ${{ steps.target.outputs.name }}
           client-id: ${{ vars.LILY_APP_CLIENT_ID }}
           private-key: ${{ secrets.LILY_APP_PRIVATE_KEY }}
           permission-issues: write
@@ -112,6 +127,8 @@ jobs:
         id: app_ro
         uses: actions/create-github-app-token@v3
         with:
+          owner: ${{ needs.gate.outputs.target_owner }}
+          repositories: ${{ needs.gate.outputs.target_repo }}
           client-id: ${{ vars.LILY_APP_CLIENT_ID }}
           private-key: ${{ secrets.LILY_APP_PRIVATE_KEY }}
           permission-issues: read
@@ -193,6 +210,8 @@ jobs:
         id: app_rw
         uses: actions/create-github-app-token@v3
         with:
+          owner: ${{ needs.gate.outputs.target_owner }}
+          repositories: ${{ needs.gate.outputs.target_repo }}
           client-id: ${{ vars.LILY_APP_CLIENT_ID }}
           private-key: ${{ secrets.LILY_APP_PRIVATE_KEY }}
           permission-issues: write

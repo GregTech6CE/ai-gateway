@@ -33,10 +33,21 @@ jobs:
     environment: llm
     steps:
       - uses: actions/checkout@v4
+      - name: Parse target repo
+        id: target
+        env:
+          TARGET_REPO: ${{ inputs.repo }}
+        run: |
+          owner="${TARGET_REPO%%/*}"
+          name="${TARGET_REPO#*/}"
+          echo "owner=$owner" >> "$GITHUB_OUTPUT"
+          echo "name=$name" >> "$GITHUB_OUTPUT"
       - name: App token (read, step scoped)
         id: app_ro
         uses: actions/create-github-app-token@v3
         with:
+          owner: ${{ steps.target.outputs.owner }}
+          repositories: ${{ steps.target.outputs.name }}
           client-id: ${{ vars.LILY_APP_CLIENT_ID }}
           private-key: ${{ secrets.LILY_APP_PRIVATE_KEY }}
           permission-issues: read
@@ -138,6 +149,8 @@ jobs:
         id: app_rw
         uses: actions/create-github-app-token@v3
         with:
+          owner: ${{ steps.target.outputs.owner }}
+          repositories: ${{ steps.target.outputs.name }}
           client-id: ${{ vars.LILY_APP_CLIENT_ID }}
           private-key: ${{ secrets.LILY_APP_PRIVATE_KEY }}
           permission-issues: write
