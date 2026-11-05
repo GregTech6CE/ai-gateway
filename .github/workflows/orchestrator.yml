@@ -113,9 +113,10 @@ jobs:
           mkdir -p .cache
           if [ -d .cache/gt6.git ]; then
             git -C .cache/gt6.git remote set-url origin "https://github.com/$CODE_REPO.git"
-            git -C .cache/gt6.git fetch --prune --tags
-            rm -rf .cache/gt6.git/code
+            # 缓存会带上一次运行的 worktree 注册信息；工作区路径变化后 fetch 会拒绝更新已登记的分支。
             git -C .cache/gt6.git worktree prune
+            rm -rf .cache/gt6.git/worktrees
+            git -C .cache/gt6.git fetch --prune --tags
           else
             git clone --mirror "https://github.com/$CODE_REPO.git" .cache/gt6.git
           fi
