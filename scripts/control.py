@@ -144,6 +144,14 @@ def wait_run(b_repo: str, pat: str, run_id: str) -> dict:
         time.sleep(20)
 
 
+class StripAuthRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None:
+            new.remove_header("Authorization")
+        return new
+
+
 def download_artifact(b_repo: str, pat: str, artifact: dict, target: Path, prefix: str) -> None:
     url = f"https://api.github.com/repos/{b_repo}/actions/artifacts/{artifact['id']}/zip"
     request = urllib.request.Request(
@@ -154,7 +162,8 @@ def download_artifact(b_repo: str, pat: str, artifact: dict, target: Path, prefi
             "User-Agent": "lily-chan-bot-control",
         },
     )
-    with urllib.request.urlopen(request, timeout=120) as response:
+    opener = urllib.request.build_opener(StripAuthRedirect)
+    with opener.open(request, timeout=120) as response:
         payload = response.read()
     target.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(io.BytesIO(payload)) as zf:
