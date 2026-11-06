@@ -146,6 +146,7 @@ jobs:
       - name: Prefetch attachments
         run: python scripts/prefetch.py
       - name: Run Codex under supervisor
+        id: supervisor
         env:
           REPO: ${{ inputs.repo }}
           ISSUE: ${{ inputs.issue }}
@@ -153,12 +154,22 @@ jobs:
           MODEL_KEY_MISTRAL: ${{ secrets.MODEL_KEY_MISTRAL }}
           MODEL_KEY_CLINEPASS: ${{ secrets.MODEL_KEY_CLINEPASS }}
         run: python scripts/agent_supervisor.py
+      # 上传闸门：任一文件扫描失败就不提供产物目录，避免未脱敏内容进入公开 artifact。
       - name: Upload analysis outputs
-        if: always()
+        if: always() && steps.supervisor.outputs.scan_upload == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: analysis-${{ github.run_id }}
           path: outputs/
+          if-no-files-found: ignore
+          retention-days: 30
+      # 扫描失败时只留报告：result.json 自身已脱敏，只含状态与命中清单。
+      - name: Upload scan report
+        if: always() && steps.supervisor.outputs.scan_upload != 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: analysis-${{ github.run_id }}-report
+          path: outputs/result.json
           if-no-files-found: ignore
           retention-days: 30
 
@@ -186,6 +197,12 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: analysis-${{ github.run_id }}
+          path: outputs
+      - name: Download scan report
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: analysis-${{ github.run_id }}-report
           path: outputs
       - name: App token (issues:write on issue repository)
         id: app_issue

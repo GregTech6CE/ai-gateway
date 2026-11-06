@@ -1,11 +1,14 @@
+import json
 import os
 import sys
+import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
-os.environ.setdefault("REPO", "Tanimodori/GregTech6")
+os.environ.setdefault("REPO", "GregTech6CE/GregTech6")
 os.environ.setdefault("ISSUE", "1")
 
 import agent_supervisor as supervisor  # noqa: E402
@@ -52,6 +55,213 @@ class SupervisorRetryTest(unittest.TestCase):
         error = supervisor.model_pool.ModelError("rate", 429, 0, "")
         self.assertEqual(supervisor.failure_reason(error, 5), "rate 429 after 5 retries")
         self.assertEqual(supervisor.failure_reason(error, 0), "rate 429")
+
+
+class SecretScanTest(unittest.TestCase):
+    PATCHED = (
+        "OUTPUTS",
+        "RESULT_PATH",
+        "HEALTH_PATH",
+        "SUPERVISOR_LOG",
+        "ANSWER_JSON",
+        "ANSWER_MD",
+        "LOG_PATH",
+    )
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.outputs = Path(self.tmp.name)
+        self.saved = {name: getattr(supervisor, name) for name in self.PATCHED}
+        supervisor.OUTPUTS = self.outputs
+        supervisor.RESULT_PATH = self.outputs / "result.json"
+        supervisor.HEALTH_PATH = self.outputs / "model_health.json"
+        supervisor.SUPERVISOR_LOG = self.outputs / "supervisor.log"
+        supervisor.ANSWER_JSON = self.outputs / "answer.json"
+        supervisor.ANSWER_MD = self.outputs / "answer.md"
+        supervisor.LOG_PATH = self.outputs / "agent_output.log"
+        self.env = {name: os.environ.get(name) for name in supervisor.SECRET_ENVS}
+        os.environ[supervisor.SECRET_ENVS[0]] = "mistral-secret-value-0001"
+        os.environ[supervisor.SECRET_ENVS[1]] = "clinepass-secret-value-0002"
+
+    def tearDown(self):
+        for name, value in self.env.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+        for name, value in self.saved.items():
+            setattr(supervisor, name, value)
+        self.tmp.cleanup()
+
+    def write(self, relative: str, text: str) -> Path:
+        path = self.outputs / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
+        return path
+
+    def test_scan_covers_archived_attempts_and_both_keys(self):
+        archived = self.write("attempt-2/answer.md", "leak: clinepass-secret-value-0002\n")
+        result = supervisor.scan_outputs()
+        self.assertFalse(result["ok"])
+        self.assertIn("attempt-2/answer.md", result["hits"])
+        text = archived.read_text(encoding="utf-8")
+        self.assertNotIn("clinepass-secret-value-0002", text)
+        self.assertIn("[REDACTED]", text)
+
+    def test_scan_redacts_pattern_in_place(self):
+        path = self.write("prompt.txt", "token: Bearer " + "a" * 24 + " end\n")
+        result = supervisor.scan_outputs()
+        self.assertFalse(result["ok"])
+        self.assertIn("prompt.txt", result["hits"])
+        self.assertEqual(path.read_text(encoding="utf-8"), "token: [REDACTED] end\n")
+
+    def test_scan_redacts_whole_pem_block(self):
+        pem = (
+            "-----BEGIN RSA PRIVATE KEY-----\n"
+            "MIIEowIBAAKCAQEA1234567890abcdefghij\n"
+            "-----END RSA PRIVATE KEY-----\n"
+        )
+        path = self.write("leak.log", "before\n" + pem + "after\n")
+        result = supervisor.scan_outputs()
+        self.assertFalse(result["ok"])
+        text = path.read_text(encoding="utf-8")
+        self.assertNotIn("MIIEowIBAAKCAQEA", text)
+        self.assertNotIn("BEGIN RSA PRIVATE KEY", text)
+        self.assertIn("before", text)
+        self.assertIn("after", text)
+
+    def test_scan_removes_truncated_pem(self):
+        path = self.write(
+            "cut.log", "before\n-----BEGIN RSA PRIVATE KEY-----\nMIIEowIBAAKCAQEAxyz\n"
+        )
+        result = supervisor.scan_outputs()
+        self.assertFalse(result["ok"])
+        text = path.read_text(encoding="utf-8")
+        self.assertNotIn("MIIEowIBAAKCAQEAxyz", text)
+        self.assertIn("before", text)
+
+    def test_scan_drops_unreadable_tail_of_oversized_file(self):
+        head = "x" * 30
+        with mock.patch.object(supervisor, "MAX_SCAN_BYTES", 64):
+            path = self.write(
+                "huge.log", head + "\nmistral-secret-value-0001\n" + "y" * 200 + "\n"
+            )
+            result = supervisor.scan_outputs()
+        self.assertFalse(result["ok"])
+        self.assertIn("huge.log", result["hits"])
+        text = path.read_text(encoding="utf-8")
+        self.assertNotIn("mistral-secret-value-0001", text)
+        self.assertNotIn("y" * 20, text)
+        self.assertIn("内容超过扫描上限", text)
+
+    def test_scan_truncates_clean_oversized_file_without_hit(self):
+        with mock.patch.object(supervisor, "MAX_SCAN_BYTES", 64):
+            path = self.write("big.log", "clean line\n" * 20)
+            result = supervisor.scan_outputs()
+        self.assertTrue(result["ok"])
+        text = path.read_text(encoding="utf-8")
+        self.assertNotIn("clean line\n" * 20, text)
+        self.assertIn("内容超过扫描上限", text)
+
+    def test_scan_leaves_clean_file_untouched(self):
+        original = "clean line\n" * 40
+        path = self.write("clean.log", original)
+        self.assertTrue(supervisor.scan_outputs()["ok"])
+        self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_scan_failure_blocks_and_discards_file(self):
+        path = self.write("answer.md", "unscanned secret\n")
+        with mock.patch.object(supervisor, "scan_file", side_effect=OSError("denied")):
+            result = supervisor.scan_outputs()
+        self.assertFalse(result["ok"])
+        self.assertIn("answer.md（扫描失败）", result["hits"])
+        self.assertEqual(result["failed"], ["answer.md"])
+        self.assertNotIn("unscanned secret", path.read_text(encoding="utf-8"))
+
+    def test_write_result_opens_upload_gate_only_when_scan_clean(self):
+        gate = self.outputs / "gh_output"
+        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(gate)}):
+            supervisor.write_result(
+                {"status": "complete", "reason": "completed", "secret_scan": {"ok": True, "hits": [], "failed": []}},
+                {"endpoints": {}},
+                1,
+            )
+            self.assertIn("scan_upload=true", gate.read_text(encoding="utf-8"))
+            supervisor.write_result(
+                {"status": "complete", "reason": "completed", "secret_scan": {"ok": False, "hits": ["x"], "failed": ["x"]}},
+                {"endpoints": {}},
+                1,
+            )
+            self.assertIn("scan_upload=false", gate.read_text(encoding="utf-8"))
+
+    def test_upload_gate_stays_open_when_only_hits(self):
+        gate = self.outputs / "gh_output"
+        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(gate)}):
+            supervisor.write_result(
+                {"status": "failed", "reason": "x", "secret_scan": {"ok": False, "hits": ["answer.md"], "failed": []}},
+                {"endpoints": {}},
+                1,
+            )
+        self.assertIn("scan_upload=true", gate.read_text(encoding="utf-8"))
+
+    def test_early_exit_path_scans_before_opening_gate(self):
+        gate = self.outputs / "gh_output"
+        self.write("log_digest.md", "clean\n")
+        with mock.patch.dict(os.environ, {"GITHUB_OUTPUT": str(gate)}):
+            with mock.patch.object(supervisor, "scan_file", side_effect=OSError("denied")):
+                supervisor.write_result({"status": "failed", "reason": "BOT_ENABLED=false"}, {"endpoints": {}}, 0)
+        self.assertIn("scan_upload=false", gate.read_text(encoding="utf-8"))
+        payload = json.loads(supervisor.RESULT_PATH.read_text(encoding="utf-8"))
+        self.assertEqual(payload["secret_scan"]["failed"], ["log_digest.md"])
+
+    def test_scan_skips_result_json(self):
+        self.write("result.json", "mistral-secret-value-0001")
+        self.assertTrue(supervisor.scan_outputs()["ok"])
+
+    def test_merge_secret_scan_is_sticky_and_deduped(self):
+        merged = supervisor.merge_secret_scan(
+            {"ok": False, "hits": ["a.md"]}, {"ok": True, "hits": ["a.md", "b.md"]}
+        )
+        self.assertFalse(merged["ok"])
+        self.assertEqual(merged["hits"], ["a.md", "b.md"])
+        self.assertFalse(supervisor.merge_secret_scan(None, {"ok": False, "hits": ["x"]})["ok"])
+
+    def test_write_result_scans_payload_and_excludes_itself(self):
+        supervisor.write_result(
+            {"status": "failed", "reason": "auth 401 mistral-secret-value-0001", "turns": 0},
+            {"endpoints": {}},
+            1,
+        )
+        text = supervisor.RESULT_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("mistral-secret-value-0001", text)
+        payload = json.loads(text)
+        self.assertFalse(payload["secret_scan"]["ok"])
+        self.assertIn("result.json", payload["secret_scan"]["hits"])
+
+    def test_write_result_keeps_clean_payload_ok(self):
+        supervisor.write_result({"status": "complete", "reason": "completed"}, {"endpoints": {}}, 1)
+        payload = json.loads(supervisor.RESULT_PATH.read_text(encoding="utf-8"))
+        self.assertTrue(payload["secret_scan"]["ok"])
+        self.assertEqual(payload["secret_scan"]["hits"], [])
+
+    def test_write_result_log_hides_pattern_reason(self):
+        supervisor.write_result(
+            {"status": "failed", "reason": "upstream said Bearer " + "b" * 24, "turns": 0},
+            {"endpoints": {}},
+            1,
+        )
+        log = supervisor.SUPERVISOR_LOG.read_text(encoding="utf-8")
+        self.assertNotIn("b" * 24, log)
+        self.assertIn("REDACTED", log)
+
+    def test_log_event_scrubs_suspected_lines(self):
+        supervisor.log_event("exec", message="echo mistral-secret-value-0001")
+        supervisor.log_event("exec", message="curl -H 'Authorization: Bearer " + "c" * 24 + "'")
+        log = supervisor.SUPERVISOR_LOG.read_text(encoding="utf-8")
+        self.assertNotIn("mistral-secret-value-0001", log)
+        self.assertNotIn("c" * 24, log)
+        self.assertIn("[REDACTED]", log)
 
 
 if __name__ == "__main__":

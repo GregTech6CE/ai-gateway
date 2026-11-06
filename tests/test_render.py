@@ -1,4 +1,7 @@
+import contextlib
+import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -19,7 +22,7 @@ class RenderTest(unittest.TestCase):
             "confidence": 0.97,
             "reason": "未知链接广告",
         }
-        repo_cfg = {"_repo": "Tanimodori/GregTech6", "_issue": "1"}
+        repo_cfg = {"_repo": "GregTech6CE/GregTech6", "_issue": "1"}
         text = render.render_rejection(
             relevance, repo_cfg, "https://example/run/1", "abc", issue_title="测试", issue_number="1"
         )
@@ -30,9 +33,9 @@ class RenderTest(unittest.TestCase):
         self.assertIn("未知链接广告", text)
         self.assertIn("lily:rejected", text)
 
-    def test_answer_renders_maamend_style_sections(self):
+    def test_answer_renders_structured_sections(self):
         answer = json.loads((ROOT / "tests/fixtures/answer.sample.json").read_text(encoding="utf-8"))
-        repo_cfg = {"_repo": "Tanimodori/GregTech6", "_issue": "1"}
+        repo_cfg = {"_repo": "GregTech6CE/GregTech6", "_issue": "1"}
         text = render.render_answer(
             answer,
             repo_cfg,
@@ -64,7 +67,7 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("lily:partial", text)
 
     def test_partial_has_banner_and_title(self):
-        repo_cfg = {"_repo": "Tanimodori/GregTech6", "_issue": "1"}
+        repo_cfg = {"_repo": "GregTech6CE/GregTech6", "_issue": "1"}
         text = render.render_markdown(
             "# 片段",
             repo_cfg,
@@ -90,7 +93,7 @@ class RenderTest(unittest.TestCase):
         answer = json.loads((ROOT / "tests/fixtures/answer.sample.json").read_text(encoding="utf-8"))
         answer["labels"] = ["crash", "wontfix"]
         repo_cfg = {
-            "_repo": "Tanimodori/GregTech6",
+            "_repo": "GregTech6CE/GregTech6",
             "_issue": "1",
             "triage": {"write_only": ["crash"]},
         }
@@ -101,7 +104,7 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("wontfix", text)
 
     def test_failure_comment_includes_reason_and_link(self):
-        repo_cfg = {"_repo": "Tanimodori/GregTech6", "_issue": "1"}
+        repo_cfg = {"_repo": "GregTech6CE/GregTech6", "_issue": "1"}
         text = render.render_failure(
             repo_cfg,
             "https://example/run/1",
@@ -130,6 +133,47 @@ class RenderTest(unittest.TestCase):
             model_pool.write_health_file(path, state)
             self.assertEqual(model_pool.read_health_file(path), state)
             self.assertEqual(model_pool.read_health_file(Path(directory) / "missing.json"), {})
+
+
+class ScanCliTest(unittest.TestCase):
+    def run_cli(self, *args) -> tuple[int, str]:
+        buffer = io.StringIO()
+        argv = sys.argv
+        sys.argv = ["scan_out.py", *args]
+        try:
+            with contextlib.redirect_stdout(buffer):
+                scan_out.main()
+            code = 0
+        except SystemExit as exc:
+            code = int(exc.code or 0)
+        finally:
+            sys.argv = argv
+        return code, buffer.getvalue()
+
+    def test_redact_flag_rewrites_and_reports_success(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "note.md"
+            path.write_text("token: Bearer " + "a" * 24 + "\n", encoding="utf-8")
+            code, out = self.run_cli(str(path), "--redact")
+            self.assertEqual(code, 0)
+            self.assertIn("redacted", out)
+            self.assertNotIn("a" * 24, path.read_text(encoding="utf-8"))
+
+    def test_redact_flag_reports_blocked_when_content_unchanged(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "note.md"
+            path.write_text("[REDACTED]\n", encoding="utf-8")
+            original = os.environ.get("SCAN_SECRET_x")
+            os.environ["SCAN_SECRET_x"] = "[REDACTED]"
+            try:
+                code, out = self.run_cli(str(path), "--redact")
+            finally:
+                if original is None:
+                    os.environ.pop("SCAN_SECRET_x", None)
+                else:
+                    os.environ["SCAN_SECRET_x"] = original
+            self.assertEqual(code, 2)
+            self.assertIn("BLOCKED", out)
 
 
 if __name__ == "__main__":

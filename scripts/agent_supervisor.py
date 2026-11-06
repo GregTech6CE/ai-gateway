@@ -99,12 +99,17 @@ def format_event(event: str, fields: dict) -> str:
     return one_line(" ".join(f"{key}={value}" for key, value in fields.items()))
 
 
+def scrub(text: str) -> str:
+    """日志行在写出前就地脱敏，命中片段替换为占位符，其余内容保留。"""
+    return scan_out.redact(text, secret_values())
+
+
 def log_event(event: str, message: str | None = None, **fields) -> None:
     kind = "MSG" if event == "assistant" else "TOOL" if event == "exec" else "SYSTEM"
     if message is None:
         message = format_event(event, fields)
-    line = f"[{datetime.now(CST).strftime('%Y-%m-%d %H:%M:%S')}] [{kind}] {one_line(message)}"
-    with open(SUPERVISOR_LOG, "a", encoding="utf-8") as fh:
+    line = f"[{datetime.now(CST).strftime('%Y-%m-%d %H:%M:%S')}] [{kind}] {scrub(one_line(message))}"
+    with open(SUPERVISOR_LOG, "a", encoding="utf-8", newline="\n") as fh:
         fh.write(line + "\n")
     print(line, flush=True)
 
@@ -235,9 +240,8 @@ def assistant_blocks(text: str, include_last: bool = False) -> list[str]:
     return blocks
 
 
-def emit_assistant(block: str, attempt: int, key: str) -> None:
-    if scan_out.scan_text(block, [key]):
-        block = "[assistant 文本包含疑似凭据，已隐藏]"
+def emit_assistant(block: str) -> None:
+    """assistant 文本交给 log_event 统一脱敏，不在这里另做判断。"""
     log_event("assistant", message=block)
 
 
@@ -446,7 +450,7 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
                     execs = count_exec(text)
                     blocks = assistant_blocks(text)
                     for block in blocks[seen_assistant:]:
-                        emit_assistant(block, attempt, key)
+                        emit_assistant(block)
                     if len(blocks) > seen_assistant:
                         seen_assistant = len(blocks)
                     answer_size = ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0
@@ -512,7 +516,7 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
     text = read_log()
     blocks = assistant_blocks(text, include_last=True)
     for block in blocks[seen_assistant:]:
-        emit_assistant(block, attempt, key)
+        emit_assistant(block)
     turns = max(turns, count_turns(text))
     tokens = parse_tokens(text)
     code = proc.returncode if proc.returncode is not None else -1
@@ -542,22 +546,104 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
     return result
 
 
+SECRET_ENVS = ("MODEL_KEY_MISTRAL", "MODEL_KEY_CLINEPASS")
+MAX_SCAN_BYTES = 16_000_000
+
+
+def secret_values() -> list[str]:
+    return [value for name in SECRET_ENVS if (value := os.environ.get(name, ""))]
+
+
+def scan_file(path: Path, secrets: list[str]) -> bool:
+    """整体扫描并就地脱敏单个文件，返回是否命中。
+
+    不做分块：模式与私钥块都可能跨行，分块会把它们切断后漏检。文件超过上限时只保留可
+    扫描的前段，其余连同被切断的半行一起丢弃——未扫描的内容不进 artifact。读取或改写
+    失败抛出 OSError，由调用方按扫描失败处理。
+    """
+    with open(path, encoding="utf-8", errors="replace", newline="") as fh:
+        text = fh.read(MAX_SCAN_BYTES)
+        oversized = bool(fh.read(1))
+    hits = scan_out.scan_text(text, secrets)
+    if not hits and not oversized:
+        return False
+    if oversized:
+        cut = text.rfind("\n")
+        text = text[: cut + 1] if cut >= 0 else ""
+    cleaned = scan_out.redact(text, secrets)
+    if oversized:
+        cleaned = cleaned.rstrip("\n") + "\n[内容超过扫描上限，其余部分已丢弃]\n"
+    tmp = path.with_suffix(path.suffix + ".scan")
+    try:
+        with open(tmp, "w", encoding="utf-8", newline="") as fh:
+            fh.write(cleaned)
+        tmp.replace(path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+    return bool(hits)
+
+
+def discard(path: Path) -> None:
+    """扫描失败的文件尽量清空，退而删除；成败不影响上传闸门。"""
+    try:
+        with open(path, "w", encoding="utf-8", newline="") as fh:
+            fh.write("[内容未能扫描，已丢弃]\n")
+        return
+    except OSError:
+        pass
+    try:
+        path.unlink()
+    except OSError:
+        pass
+
+
 def scan_outputs() -> dict:
-    model_key = os.environ.get("MODEL_KEY_MISTRAL", "")
+    """递归扫描 outputs/ 下的文本产物，命中即就地脱敏。
+
+    result.json 被排除在文件扫描之外：它由 write_result 在序列化后扫描，否则扫描结论
+    写入自身会形成循环。按 attempt 归档的历史副本同样在扫描范围内。扫描失败的文件记入
+    failed，上传闸门据此关闭产物目录。
+    """
+    secrets = secret_values()
     hits: list[str] = []
-    for path in (ANSWER_MD, ANSWER_JSON, LOG_PATH, SUPERVISOR_LOG, RESULT_PATH):
-        if not path.exists():
+    failed: list[str] = []
+    for path in sorted(OUTPUTS.rglob("*")):
+        if not path.is_file() or path.name == RESULT_PATH.name:
             continue
+        relative = path.relative_to(OUTPUTS).as_posix()
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except Exception:
-            continue
-        found = scan_out.scan_text(text, [model_key])
-        if found:
-            hits.append(path.name)
-            if model_key:
-                path.write_text(text.replace(model_key, "[REDACTED]"), encoding="utf-8")
-    return {"ok": not hits, "hits": hits}
+            if scan_file(path, secrets):
+                hits.append(relative)
+        except OSError:
+            hits.append(f"{relative}（扫描失败）")
+            failed.append(relative)
+            discard(path)
+    return {"ok": not hits, "hits": hits, "failed": failed}
+
+
+def merge_secret_scan(previous, current: dict) -> dict:
+    previous = previous if isinstance(previous, dict) else {}
+    hits = list(dict.fromkeys([*(previous.get("hits") or []), *(current.get("hits") or [])]))
+    failed = list(dict.fromkeys([*(previous.get("failed") or []), *(current.get("failed") or [])]))
+    ok = previous.get("ok") is not False and current.get("ok") is not False and not hits
+    return {"ok": ok, "hits": hits, "failed": failed}
+
+
+def scan_payload(payload: dict) -> dict:
+    text = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    hits = scan_out.scan_text(text, secret_values())
+    return {"ok": not hits, "hits": ["result.json"] if hits else [], "failed": []}
+
+
+def loggable(payload: dict) -> dict:
+    """只保留可写进日志的字段；reason 先脱敏再落盘。"""
+    keys = ("status", "confidence", "reason", "turns", "tokens", "elapsed_sec", "attempts", "secret_scan")
+    safe = {key: payload[key] for key in keys if key in payload}
+    reason = str(safe.get("reason") or "")
+    if reason:
+        safe["reason"] = scan_out.redact(reason, secret_values())
+    return safe
 
 
 def write_result(result: dict, state: dict, attempts: int) -> None:
@@ -574,9 +660,17 @@ def write_result(result: dict, state: dict, attempts: int) -> None:
             except Exception:
                 confidence = ""
         payload["confidence"] = confidence
-    c.dump_json(RESULT_PATH, payload)
+    if "secret_scan" not in payload:
+        payload["secret_scan"] = scan_outputs()
+    payload["secret_scan"] = merge_secret_scan(
+        payload.get("secret_scan"), scan_payload({**payload, "secret_scan": None})
+    )
+    text = scan_out.redact(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", secret_values())
+    RESULT_PATH.write_text(text, encoding="utf-8")
     c.dump_json(HEALTH_PATH, state)
-    log_event("result", **payload)
+    # 上传闸门：任一文件扫描失败都不上传产物目录，只留 result.json 报告。
+    c.set_output("scan_upload", "false" if payload["secret_scan"].get("failed") else "true")
+    log_event("result", **loggable(payload))
 
 
 def main() -> None:
