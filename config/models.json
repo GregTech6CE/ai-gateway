@@ -31,13 +31,13 @@
             "endpoint": "mistral-deepseek",
             "context": 1048576,
             "effort": "high",
-            "priority": 10
+            "weight": 120
           },
           {
             "endpoint": "clinepass-deepseek",
-            "context": 131072,
+            "context": 1048576,
             "effort": "high",
-            "priority": 20
+            "weight": 40
           }
         ]
       }

@@ -38,6 +38,8 @@ RELEVANCE_PATH = OUTPUTS / "relevance.json"
 SUPERVISOR_LOG = OUTPUTS / "supervisor.log"
 REQUIRED = ("issue_type", "conclusion", "confidence", "evidence", "fix_plan", "labels", "partial")
 CST = timezone(timedelta(hours=8))
+# 绑定未写 context 时的兜底；当前两个 endpoint 都是 1M，缺省与之一致，避免低估窗口。
+DEFAULT_CONTEXT_WINDOW = 1_048_576
 
 
 def one_line(value) -> str:
@@ -169,7 +171,7 @@ def write_codex_config(entry: dict, key: str) -> dict[str, str]:
         [
             f'model = "{entry["model"]}"',
             f'model_provider = "{alias}"',
-            f'model_context_window = {int(entry.get("context", 200000))}',
+            f'model_context_window = {int(entry.get("context") or DEFAULT_CONTEXT_WINDOW)}',
             f'model_reasoning_effort = "{entry.get("effort", "")}"',
             'approval_policy = "never"',
             'sandbox_mode = "danger-full-access"',

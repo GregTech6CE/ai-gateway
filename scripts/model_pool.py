@@ -1,7 +1,7 @@
 """共享模型池：endpoint 是健康单位，role 只是绑定。仅使用标准库。
 
 - endpoint：provider + base_url + api_key_env + model，是会被 401/429 打挂的对象。
-- role：共享模型池的绑定（当前为 analysis），只决定用哪个 endpoint、context、effort 与顺序。
+- role：共享模型池的绑定（当前为 analysis），只决定用哪个 endpoint、context、effort 与权重。
 - down/cooldown 只记在 endpoint 上；一个 endpoint 挂了，所有绑定它的 role 都不可用。
 """
 
@@ -18,6 +18,9 @@ from pathlib import Path
 import common as c
 
 POOL_PATH = c.ROOT / "config/models.json"
+# 待机时长上限：超过一个月按一个月计，从未使用过的取同值。没有上限时，一条陈旧或
+# 被清空的时间戳会让该 endpoint 永久占据首位。
+MAX_IDLE_SECONDS = 30 * 24 * 60 * 60
 
 
 class ModelError(RuntimeError):
@@ -56,6 +59,14 @@ def _endpoints(pool: dict) -> dict[str, dict]:
     }
 
 
+def _weight(entry: dict) -> int:
+    """绑定的调度权重，非负整数；缺失或非法时取 1，保持中性。"""
+    try:
+        return max(0, int(entry.get("weight", 1)))
+    except (TypeError, ValueError):
+        return 1
+
+
 def bindings(pool: dict, role: str) -> list[dict]:
     """把 role 绑定与 endpoint 合并；id 保持 endpoint id，用作健康状态的 key。"""
     available = _endpoints(pool)
@@ -68,7 +79,7 @@ def bindings(pool: dict, role: str) -> list[dict]:
         merged.update({key: value for key, value in binding.items() if key != "endpoint"})
         merged["role"] = role
         result.append(merged)
-    result.sort(key=lambda entry: (int(entry.get("priority", 100)), entry["id"]))
+    result.sort(key=lambda entry: (-_weight(entry), entry["id"]))
     return result
 
 
@@ -226,20 +237,33 @@ def select(pool: dict, role: str, state: dict) -> tuple[dict, str]:
 
 
 def candidates(pool: dict, role: str, state: dict, require_key: bool = True) -> list[dict]:
-    """可用 endpoint 按「最久未用」排序，其次按 priority 与 id，作为简单的 key 负载均衡。"""
+    """按 `weight × 待机时长` 从高到低排序，作为带权的最久未用调度。
+
+    待机时长 = 距上次被选中的秒数，上限 `MAX_IDLE_SECONDS`；从未使用过的取上限值，因此
+    「闲置一个月」与「从未用过」等价。得分 = 权重 × 待机时长，选中即刷新 `last_used_at`，
+    所以长期选择次数趋于权重之比——权重翻倍的效果是间隔减半，而不是永久优先。
+    """
     items = [
         entry
         for entry in bindings(pool, role)
         if is_available(entry, state) and (not require_key or key_for(entry))
     ]
+    now = _now()
+
+    def idle_seconds(entry: dict) -> float:
+        used = _endpoint_state(state, entry["id"]).get("last_used_at")
+        if not used:
+            return MAX_IDLE_SECONDS
+        try:
+            elapsed = (now - _parse(used)).total_seconds()
+        except Exception:
+            # 时间戳来自外部 variable，坏值按「从未使用」处理，不让它打断调度。
+            return MAX_IDLE_SECONDS
+        return min(MAX_IDLE_SECONDS, max(0.0, elapsed))
 
     def sort_key(entry: dict):
-        used = _endpoint_state(state, entry["id"]).get("last_used_at")
-        try:
-            used_at = _parse(used).timestamp() if used else 0.0
-        except Exception:
-            used_at = 0.0
-        return (used_at, int(entry.get("priority", 100)), entry["id"])
+        weight = _weight(entry)
+        return (-weight * idle_seconds(entry), -weight, entry["id"])
 
     items.sort(key=sort_key)
     return items
