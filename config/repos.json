@@ -12,6 +12,10 @@
       "code_ref_mode": "tag",
       "tag_template": "v{version}",
       "fallback_ref": "master",
+      "golden": {
+        "repo": "GregTech6/gregtech6",
+        "commit": "3703e40308c8c030763fd6297dea8b210d2a77b1"
+      },
       "reject": {
         "only": [
           "spam",

@@ -289,6 +289,7 @@ def main() -> None:
     code_refs = " ".join(refs)
     run_cache_prefix = cache_prefix(repo_cfg["code_repo"])
 
+    golden = repo_cfg.get("golden") or {}
     finish(
         "proceed",
         "accepted",
@@ -297,6 +298,8 @@ def main() -> None:
         code_repo=snapshot["code_repo"],
         code_refs=code_refs,
         cache_prefix=run_cache_prefix,
+        golden_repo=str(golden.get("repo") or ""),
+        golden_commit=str(golden.get("commit") or ""),
         issue_title=issue.get("title", ""),
     )
 

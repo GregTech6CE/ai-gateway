@@ -61,6 +61,8 @@ jobs:
       code_repo: ${{ steps.gate.outputs.code_repo }}
       code_ref: ${{ steps.gate.outputs.code_ref }}
       code_refs: ${{ steps.gate.outputs.code_refs }}
+      golden_repo: ${{ steps.gate.outputs.golden_repo }}
+      golden_commit: ${{ steps.gate.outputs.golden_commit }}
       cache_prefix: ${{ steps.gate.outputs.cache_prefix }}
       issue_title: ${{ steps.gate.outputs.issue_title }}
     steps:
@@ -108,10 +110,18 @@ jobs:
           path: .cache/gt6.git
           key: ${{ needs.gate.outputs.cache_prefix }}-${{ github.run_id }}
           restore-keys: ${{ needs.gate.outputs.cache_prefix }}-
+      - name: Restore golden mirror
+        uses: actions/cache/restore@v4
+        with:
+          path: .cache/golden.git
+          key: golden-${{ needs.gate.outputs.golden_commit }}
+          restore-keys: golden-
       - name: Sync mirror and create worktrees
         env:
           CODE_REPO: ${{ needs.gate.outputs.code_repo }}
           CODE_REFS: ${{ needs.gate.outputs.code_refs }}
+          GOLDEN_REPO: ${{ needs.gate.outputs.golden_repo }}
+          GOLDEN_COMMIT: ${{ needs.gate.outputs.golden_commit }}
         run: |
           set -euo pipefail
           mkdir -p .cache
@@ -134,6 +144,24 @@ jobs:
             if [ -z "$primary" ]; then primary="$slug"; fi
           done
           ln -sfn "$primary" code/current
+          # golden 是上游原版 GT6 的固定提交：6CE 的行号引用与行为对齐都以它为基准，
+          # 因此诊断时需要能直接读到这份参照实现，而不是靠记忆复述。
+          if [ -n "${GOLDEN_REPO:-}" ] && [ -n "${GOLDEN_COMMIT:-}" ]; then
+            if [ -d .cache/golden.git ]; then
+              git -C .cache/golden.git remote set-url origin "https://github.com/$GOLDEN_REPO.git"
+              git -C .cache/golden.git worktree prune
+              rm -rf .cache/golden.git/worktrees
+              git -C .cache/golden.git fetch --prune --tags || true
+            else
+              git clone --mirror "https://github.com/$GOLDEN_REPO.git" .cache/golden.git
+            fi
+            if git -C .cache/golden.git cat-file -e "$GOLDEN_COMMIT^{commit}" 2>/dev/null; then
+              git -C .cache/golden.git worktree add -f "$worktree_root/golden" "$GOLDEN_COMMIT"
+              echo "golden: $GOLDEN_REPO@$GOLDEN_COMMIT"
+            else
+              echo "golden commit $GOLDEN_COMMIT not reachable; skipping"
+            fi
+          fi
       - name: Save GT6 mirror
         if: always()
         continue-on-error: true
@@ -141,8 +169,29 @@ jobs:
         with:
           path: .cache/gt6.git
           key: ${{ needs.gate.outputs.cache_prefix }}-${{ github.run_id }}
+      - name: Save golden mirror
+        if: always()
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: .cache/golden.git
+          key: golden-${{ needs.gate.outputs.golden_commit }}
       - name: Install Codex CLI (pin before production)
         run: npm install -g @openai/codex@0.166.0
+      - name: Provision runtimes
+        # agent 会写脚本自检答案，需要能直接用 node 与 python；镜像自带解释器，缺的是包。
+        # 版本固定，避免同一 issue 在不同时间得出不同结论。
+        run: |
+          set -euo pipefail
+          node --version
+          python --version
+          python -m pip install --disable-pip-version-check --quiet \
+            "pyyaml==6.0.3" "pillow==13.0.0"
+          python - <<'PY'
+          import PIL
+          import yaml
+          print(f"pyyaml {yaml.__version__} / pillow {PIL.__version__}")
+          PY
       - name: Prefetch attachments
         run: python scripts/prefetch.py
       - name: Run Codex under supervisor

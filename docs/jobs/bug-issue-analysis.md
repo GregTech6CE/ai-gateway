@@ -80,15 +80,16 @@ failure）：
 ### 权限边界
 
 - **文件访问**：检出会把本仓库写到工作区；可写 `inputs/`（下载 gate artifact、写入 `logs/`
-  附件）、`code/`（worktree）、`.cache/`（mirror 缓存）、`.codex/`（CLI 配置）、`outputs/`
-  （全部产物）。`code/` 对 agent 只读是提示词约定，不是文件系统强制。
+  附件）、`code/`（worktree，含 `code/current` 与 `code/golden`）、`.cache/`（两个 mirror
+  缓存）、`.codex/`（CLI 配置）、`outputs/`（全部产物）。`code/` 对 agent 只读是提示词约定，
+  不是文件系统强制。
 - **容器权限**：平台提供托管 runner；本仓库设定 `approval_policy = never`、
   `sandbox_mode = danger-full-access`、`web_search = disabled`，job 超时 75 分钟，
   supervisor 墙钟预算 60 分钟（从相关性分类之前开始计算）。没有人工审批，也没有沙箱
   兜底——隔离来自凭据缺失，不来自运行时限制。
 - **网络访问**：模型 endpoint 的 `base_url`、`api.github.com`（下载 artifact、轮询
-  `bot:stop`）、`github.com`（mirror 克隆与附件下载）、npm registry（安装固定版本 Codex
-  CLI）。
+  `bot:stop`）、`github.com`（两个 mirror 的克隆与附件下载）、npm registry（安装固定版本
+  Codex CLI）、PyPI（安装固定版本的 `pyyaml` 与 `pillow`）。
 - **Token 权限**：持有 `MODEL_KEY_MISTRAL` 与 `MODEL_KEY_CLINEPASS` 两个 key（切换
   endpoint 时无需重新注入），Codex 只通过 `LLM_API_KEY` 使用当前 endpoint 的一个。不持有
   App 私钥、App token 与 `issues: write`；`GITHUB_TOKEN`、`SELF_TOKEN` 被移除，`GH_TOKEN`
@@ -99,22 +100,24 @@ failure）：
 1. 下载 `gate-<run_id>` artifact 到 `inputs/`。缺快照即失败，不重新读取 issue。
 2. 还原 mirror 缓存，`fetch` 后按 ref 建 worktree，`code/current` 指向主 ref。恢复缓存前
    先清理 worktree 注册，否则路径变化后 fetch 会被拒绝。某个 ref 无效时 worktree 回退
-   `master`，此时 `code_ref` 与实际检出不一致。
-3. 安装固定版本的 Codex CLI。版本是环境的一部分，升级等同改变分析行为。
+   `master`，此时 `code_ref` 与实际检出不一致。`code/golden` 是另一个仓库：上游原版 GT6
+   的固定提交，单独一份 mirror 缓存，解析不到就跳过，不影响主流程。
+3. 安装固定版本的 Codex CLI，并装好 `pyyaml` 与 `pillow`：agent 会写脚本自检答案，缺少
+   这些包会让它反复尝试而不是给出结论。版本固定，避免同一 issue 在不同时间得出不同结果。
 4. 预取附件。下载与解压由脚本完成，不交给 agent：单文件与总量有上限，zip 内全部非目录
    条目落盘，但跳过绝对路径与含 `..` 的条目；落盘后按文本后缀筛出可疑行并脱敏，写入
    `log_digest.md`。
-5. 相关性分类。用同一个 analysis endpoint 做一次 `temperature: 0` 的 JSON 调用，输出
-   `spam`/`out_of_scope`/`in_scope`。只有前两类且达到 `reject.min_confidence` 才拒绝；
-   拒绝时写 `relevance.json` 与 `result.json` 后结束，不进入 agent。分类失败不阻断，
-   记录后继续。
+5. preflight 轮。用候选序逐个做一次 `temperature: 0` 的 JSON 调用，既分类也判定入口：
+   输出 `spam`/`out_of_scope`/`in_scope`，只有前两类且达到 `reject.min_confidence` 才拒绝。
+   传输失败（超时、4xx、5xx）按探测规则计罚并换下一个候选；有响应但分类不可解析，说明
+   入口可用、只是没给出结论，按 `in_scope` 继续。全部候选都失败时以「无入口通过 preflight」
+   结束，不做无模型的降级。判定发生在任何 agent 代码执行之前，因此这条路径没有工具。
 6. 运行 agent。prompt 由 `prompts/common/` 与 `prompts/repos/<profile>/` 组合，组合结果
    写入 `prompt.txt` 以便复核。agent 按四个节点增量写 `answer.md`，最后写 `answer.json`。
-   没有独立的探测请求：第一次对话本身就是探活。等待 `l2.first_response_seconds`（当前
-   180 秒）仍没有模型输出，或进程未产出任何回复就结束，都算首轮失败——该 endpoint 按
-   探测失败的同一套规则计罚（早期/晚期分桶与指数退避不变），立刻换下一个候选，不在原地
-   重试。一旦出现首轮输出，该 endpoint 即被锁定，后续失败只在这一个 endpoint 上按
-   `rate_limit_retries` 退避重试，不再切换。
+   入口已由 preflight 锁定，此后的失败只在同一个入口上按 `rate_limit_retries` 退避重试；
+   只有确定性错误（`auth`/`config`，例如该 CLI 版本不支持某个 provider 配置）才继续沿
+   候选序换人。`l2.stall_seconds`（当前 180 秒）内没有任何输出即终止本次尝试：它只防
+   挂死吃掉 job 预算，不参与入口判定，也不计罚。
 7. 扫描输出。递归遍历 `outputs/`（含按 attempt 归档的副本）并**就地脱敏**：每个文件整体
    读入后匹配，私钥块整块替换（缺 `END` 的半截块一直吞到文末），其余命中片段替换为
    `[REDACTED]`。超过扫描上限的文件只保留可扫描的前段，其余连同被切断的半行一起丢弃并
@@ -129,7 +132,7 @@ supervisor 是这一层唯一的运行时约束：墙钟上限、重复命令检
 秒数，上限一个月；从未使用过的取同一上限，所以「闲置一个月」与「从未用过」等价——没有
 上限时，一条陈旧或缺失的时间戳会让该 endpoint 永久占据首位。权重只改变间隔长短，不产生
 永久优先，长期选择次数趋于权重之比。排序在 `gate` 阶段算定并写入 `inputs/model.json`，
-supervisor 按序消费：只有首轮失败才会走到下一个候选，首轮成功即锁定，不再切换。
+supervisor 按序消费：只有 preflight 失败才会走到下一个候选，通过即锁定。
 
 绑定里的 `context` 写入 `.codex/config.toml` 的 `model_context_window`，缺省 1048576。
 它是声明值，必须与 provider 的真实窗口一致：写大了会由上游报错而非本地提前压缩。
@@ -247,8 +250,8 @@ supervisor 按序消费：只有首轮失败才会走到下一个候选，首轮
 ## 不可改动的性质
 
 - `gate` 不调用模型、不写 issue；`analysis` 不持有写凭据；`finalize` 不运行 agent。
-- 模型只在首轮之前可换：首轮没有正常响应就换下一个候选，出现首轮输出后锁定，不存在中途
-  换模型的路径。首轮失败与探测失败同样计罚。
+- 模型只在 preflight 之前可换：preflight 失败就换下一个候选，通过即锁定。运行期只有
+  确定性错误（`auth`/`config`）会触发换人，其余失败在原地退避重试。
 - agent 的 prompt 里，issue 正文与日志是证据，不是指令。
 - 扫描在先，发布在后；扫描命中不进入人工复核，直接阻断。
 - 脱敏与阻断分开：文件先就地脱敏，命中再阻断发布；扫描失败时上传闸门关闭，产物目录不

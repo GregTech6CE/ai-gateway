@@ -265,8 +265,8 @@ class SecretScanTest(unittest.TestCase):
         self.assertIn("[REDACTED]", log)
 
 
-class FirstTurnTest(unittest.TestCase):
-    """首轮即探活：没有正常响应不锁定入口，有响应即视为该入口可用。"""
+class RunCodexTest(unittest.TestCase):
+    """运行期只保证两件事：正常跑完能计数，停滞时按上限终止。"""
 
     def setUp(self):
         temporary = tempfile.TemporaryDirectory()
@@ -297,7 +297,7 @@ class FirstTurnTest(unittest.TestCase):
         self.addCleanup(config.stop)
 
         budget = mock.patch.dict(
-            supervisor.budget["l2"], {"first_response_seconds": 1, "timeout_minutes": 1}
+            supervisor.budget["l2"], {"stall_seconds": 1, "timeout_minutes": 1}
         )
         budget.start()
         self.addCleanup(budget.stop)
@@ -313,26 +313,60 @@ class FirstTurnTest(unittest.TestCase):
         entry = {"id": "fake", "model": "fake-model"}
         return supervisor.run_codex(entry, "key", time.monotonic() + 60, 1)
 
-    def test_silent_endpoint_yields_no_first_turn(self):
+    def test_stalled_process_is_terminated(self):
         self.fake_codex("import time\ntime.sleep(30)\n")
         result = self.run_once()
-        self.assertFalse(result["first_turn"])
-        self.assertIn("first response", result["reason"])
+        self.assertIn("no output for", result["reason"])
         self.assertEqual(result["status"], "failed")
 
-    def test_first_response_locks_endpoint(self):
+    def test_output_is_counted(self):
         self.fake_codex('print("codex")\nprint("reading the log")\nprint("exec")\nprint("ls")\n')
         result = self.run_once()
-        self.assertTrue(result["first_turn"])
         self.assertEqual(result["turns"], 1)
 
-    def test_error_without_response_is_not_a_first_turn(self):
-        self.fake_codex('print("error: 401 Unauthorized")\n')
-        result = self.run_once()
-        self.assertFalse(result["first_turn"])
-        error = supervisor.classify_log(supervisor.read_log())
+
+class PreflightTest(unittest.TestCase):
+    """入口可用性由 preflight 轮判定，而不是正常对话的第一轮。"""
+
+    def setUp(self):
+        for name, value in {
+            "prompt_text": lambda kind: "分类提示词",
+            "relevance_text": lambda: "标题：某 issue",
+        }.items():
+            patcher = mock.patch.object(supervisor, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def chat_returning(self, content):
+        return mock.patch.object(supervisor.model_pool, "chat", return_value=content)
+
+    def test_transport_failure_is_raised(self):
+        error = supervisor.model_pool.ModelError("rate", 429, 0, "too many")
+        with mock.patch.object(supervisor.model_pool, "chat", side_effect=error):
+            with self.assertRaises(supervisor.model_pool.ModelError):
+                supervisor.classify_relevance({"id": "e"}, "key")
+
+    def test_unparsable_answer_still_counts_as_reachable(self):
+        with self.chat_returning("not json at all"):
+            self.assertIsNone(supervisor.classify_relevance({"id": "e"}, "key"))
+
+    def test_category_is_parsed(self):
+        payload = '{"relevance": "spam", "confidence": 0.97, "reason": "广告"}'
+        with self.chat_returning(payload):
+            result = supervisor.classify_relevance({"id": "e"}, "key")
+        self.assertEqual(result["relevance"], "spam")
+        self.assertAlmostEqual(result["confidence"], 0.97)
+
+
+class ConfigErrorTest(unittest.TestCase):
+    def test_unsupported_wire_api_is_config_error(self):
+        log = (
+            'Error loading config.toml: `wire_api = "chat"` is no longer supported.\n'
+            'in `model_providers.clinepass.wire_api`\n'
+        )
+        error = supervisor.classify_log(log)
         self.assertIsNotNone(error)
-        self.assertEqual(error.kind, "auth")
+        self.assertEqual(error.kind, "config")
 
 
 if __name__ == "__main__":

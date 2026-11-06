@@ -59,12 +59,8 @@ def format_event(event: str, fields: dict) -> str:
         return f"可用分析入口：pool={fields.get('pool')} count={fields.get('count')} entries={entries}"
     if event == "attempt_archive":
         return f"开始 attempt {fields.get('attempt')}：entry={fields.get('entry')}"
-    if event == "first_turn_ok":
-        return f"首轮响应正常：entry={fields.get('entry')} 耗时={fields.get('elapsed_ms')}ms"
-    if event == "first_turn_timeout":
-        return f"首轮无响应超时：entry={fields.get('entry')} 已等待={fields.get('elapsed_sec')}s"
-    if event == "first_turn_error":
-        return f"首轮失败，切换入口：entry={fields.get('entry')} kind={fields.get('kind')} status={fields.get('status')} reason={fields.get('reason')}"
+    if event == "stall":
+        return f"停滞终止：连续 {fields.get('stall_seconds')}s 无任何输出，attempt={fields.get('attempt')}"
     if event == "codex_retry":
         return f"Codex {fields.get('kind')} 等待重试：attempt={fields.get('attempt')} entry={fields.get('entry')} retry={fields.get('retry')}/{fields.get('max_retries')} wait={fields.get('wait_sec')}s"
     if event == "codex_retry_skip":
@@ -91,8 +87,14 @@ def format_event(event: str, fields: dict) -> str:
         return f"相关性分类：category={fields.get('category')} confidence={fields.get('confidence')} reason={fields.get('reason')}"
     if event == "relevance_rejected":
         return f"相关性拒绝：category={fields.get('category')} confidence={fields.get('confidence')}"
-    if event == "relevance_error":
-        return f"相关性分类失败，继续分析：{fields.get('error')}"
+    if event == "preflight_ok":
+        return f"preflight 通过：entry={fields.get('entry')} 耗时={fields.get('elapsed_ms')}ms"
+    if event == "preflight_error":
+        return f"preflight 失败，换下一个入口：entry={fields.get('entry')} kind={fields.get('kind')} status={fields.get('status')}"
+    if event == "preflight_unparsed":
+        return f"preflight 有响应但分类不可解析：entry={fields.get('entry')} error={fields.get('error') or '-'}"
+    if event == "entry_unusable":
+        return f"入口不可用，换下一个：entry={fields.get('entry')} kind={fields.get('kind')}"
     if event == "missing_api_key":
         return f"缺少 API key：entry={fields.get('entry')} env={fields.get('api_key_env')}"
     if event == "codex_error":
@@ -159,6 +161,8 @@ def build_prompt() -> str:
         f"{skill}\n\n{nodes}\n\n"
         f"目标 issue：{REPO}#{ISSUE}\n"
         "工作目录：inputs/、code/、outputs/。只读 inputs/ 与 code/，只写 outputs/。\n"
+        "code/current 指向报告里的版本；若存在 code/golden，它是上游原版 GT6 的固定提交，"
+        "即参照实现基准，用于判断某个行为是移植偏差还是上游本就如此。\n"
     )
 
 
@@ -272,6 +276,11 @@ def relevance_text() -> str:
 
 
 def classify_relevance(entry: dict, key: str) -> dict | None:
+    """preflight 轮：一次 JSON 调用同时完成相关性分类与入口可用性判定。
+
+    传输层失败以 `ModelError` 抛出，由调用方计罚并换下一个入口；回答无法解析或类别非法
+    只说明这次分类没给出结论，请求本身已经成功，按"入口可用、无分类结论"处理。
+    """
     if not key:
         return None
     prompt = prompt_text("relevance")
@@ -282,20 +291,21 @@ def classify_relevance(entry: dict, key: str) -> dict | None:
         {"role": "system", "content": prompt},
         {"role": "user", "content": text},
     ]
+    content = model_pool.chat(
+        entry,
+        key,
+        messages,
+        max_tokens=int(budget["relevance"].get("max_tokens", 400)),
+        temperature=0,
+        response_format={"type": "json_object"},
+        timeout=int(budget["relevance"].get("timeout_seconds", 90)),
+    )
     try:
-        content = model_pool.chat(
-            entry,
-            key,
-            messages,
-            max_tokens=int(budget["relevance"].get("max_tokens", 400)),
-            temperature=0,
-            response_format={"type": "json_object"},
-            timeout=int(budget["relevance"].get("timeout_seconds", 90)),
-        )
         match = re.search(r"\{.*\}", content or "", re.S)
         data = json.loads(match.group(0) if match else (content or "{}"))
         category = str(data.get("relevance", "")).lower()
         if category not in ("in_scope", "spam", "out_of_scope"):
+            log_event("preflight_unparsed", entry=entry["id"])
             return None
         try:
             confidence = min(max(float(data.get("confidence", 0)), 0.0), 1.0)
@@ -310,7 +320,7 @@ def classify_relevance(entry: dict, key: str) -> dict | None:
             "classified_at": datetime.now(timezone.utc).isoformat(),
         }
     except Exception as exc:
-        log_event("relevance_error", error=str(exc)[:300])
+        log_event("preflight_unparsed", entry=entry["id"], error=f"{type(exc).__name__}"[:80])
         return None
 
 
@@ -373,6 +383,10 @@ def classify_log(text: str) -> model_pool.ModelError | None:
     if not error_lines:
         return None
     joined = "\n".join(error_lines)
+    # 配置层错误发生在会话建立之前，CLI 会直接退出且不产生任何事件；归为 config 让上层
+    # 换一个入口，而不是把它当成上游故障。
+    if "error loading config.toml" in joined or "no longer supported" in joined:
+        return model_pool.ModelError("config", 0, 0, "codex config rejected")
     if "401" in joined or "unauthorized" in joined or "invalid api key" in joined:
         return model_pool.ModelError("auth", 401, 0, "codex log")
     if "429" in joined or "rate limit" in joined or "too many requests" in joined:
@@ -423,7 +437,7 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
     env["GH_TOKEN"] = GH_RO
 
     timeout_minutes = int(budget["l2"]["timeout_minutes"])
-    first_response_seconds = int(budget["l2"].get("first_response_seconds", 180))
+    stall_seconds = int(budget["l2"].get("stall_seconds", 180))
     threshold = int(budget["l2"].get("loop_repeat_threshold", 3))
     started = time.monotonic()
     reason = "completed"
@@ -457,7 +471,8 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
         last_answer_size = -1
         repeats = 0
         seen_assistant = 0
-        first_response_at: float | None = None
+        last_growth_at = started
+        last_log_size = -1
         try:
             while proc.poll() is None:
                 time.sleep(1)
@@ -465,13 +480,15 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
                     reason = f"timeout {timeout_minutes}min"
                     log_event("timeout", attempt=attempt, elapsed_sec=round(time.monotonic() - started, 1))
                     break
-                if first_response_at is None and time.monotonic() - started > first_response_seconds:
-                    reason = f"no first response in {first_response_seconds}s"
+                if time.monotonic() - last_growth_at > stall_seconds:
+                    # 只看"是否还有输出"，不看它是第几轮：入口可用性已由 preflight 判定，
+                    # 这里只负责不让一次挂死吃掉整个 job 预算。
+                    reason = f"no output for {stall_seconds}s"
                     log_event(
-                        "first_turn_timeout",
+                        "stall",
                         attempt=attempt,
                         entry=entry["id"],
-                        elapsed_sec=round(time.monotonic() - started, 1),
+                        stall_seconds=stall_seconds,
                     )
                     break
                 if time.monotonic() - last_check >= 5:
@@ -483,14 +500,13 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
                         emit_assistant(block)
                     if len(blocks) > seen_assistant:
                         seen_assistant = len(blocks)
-                    if turns and first_response_at is None:
-                        first_response_at = time.monotonic()
-                        log_event(
-                            "first_turn_ok",
-                            attempt=attempt,
-                            entry=entry["id"],
-                            elapsed_ms=round((first_response_at - started) * 1000),
-                        )
+                    try:
+                        log_size = LOG_PATH.stat().st_size
+                    except OSError:
+                        log_size = last_log_size
+                    if log_size != last_log_size:
+                        last_log_size = log_size
+                        last_growth_at = time.monotonic()
                     answer_size = ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0
                     if execs > seen_exec:
                         command = last_exec_command(text)
@@ -546,8 +562,6 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
 
     elapsed = time.monotonic() - started
     text = read_log()
-    if first_response_at is None and count_turns(text):
-        first_response_at = time.monotonic()
     blocks = assistant_blocks(text, include_last=True)
     for block in blocks[seen_assistant:]:
         emit_assistant(block)
@@ -574,7 +588,6 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
         "tokens": tokens,
         "exit_code": code,
         "entry_id": entry["id"],
-        "first_turn": first_response_at is not None or status == "complete",
         "answer_md_bytes": ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0,
         "answer_json": ANSWER_JSON.exists(),
     }
@@ -743,8 +756,46 @@ def main() -> None:
     attempts = 0
     final: dict = {"status": "failed", "reason": "no attempt", "turns": 0, "elapsed_sec": 0, "tokens": 0, "exit_code": 0, "entry_id": ""}
 
-    first_entry = entries[0]
-    relevance = classify_relevance(first_entry, model_pool.key_for(first_entry))
+    # preflight 轮：用相关性分类的调用判定入口可用性。它是纯 HTTP 调用、没有工具，判定发生
+    # 在任何 agent 代码执行之前；成功即锁定该入口，失败按探测规则计罚并换下一个候选。
+    chosen: dict | None = None
+    relevance: dict | None = None
+    for entry in entries:
+        key = model_pool.key_for(entry)
+        if not key:
+            log_event("missing_api_key", entry=entry["id"], api_key_env=entry.get("api_key_env"))
+            model_pool.mark_failure(
+                state, entry, model_pool.ModelError("auth", 0, 0, "missing key"), pool_cfg
+            )
+            continue
+        preflight_started = time.monotonic()
+        try:
+            relevance = classify_relevance(entry, key)
+        except model_pool.ModelError as exc:
+            log_event(
+                "preflight_error",
+                entry=entry["id"],
+                kind=exc.kind,
+                status=exc.status,
+            )
+            model_pool.mark_failure(state, entry, exc, pool_cfg)
+            relevance = None
+            continue
+        model_pool.mark_used(state, entry)
+        log_event(
+            "preflight_ok",
+            entry=entry["id"],
+            elapsed_ms=round((time.monotonic() - preflight_started) * 1000),
+        )
+        chosen = entry
+        break
+
+    if chosen is None:
+        final["reason"] = "no endpoint passed preflight"
+        final["secret_scan"] = scan_outputs()
+        write_result(final, state, attempts)
+        sys.exit(1)
+
     if relevance:
         c.dump_json(RELEVANCE_PATH, relevance)
         log_event(
@@ -780,20 +831,15 @@ def main() -> None:
             )
             return
 
-    # 候选按「最久未用」排序，逐个尝试。不做独立探测：第一次对话本身就是探活，首轮没有
-    # 正常响应就换下一个 endpoint；一旦有正常响应即锁定，后续失败只在该 endpoint 上重试。
+    # 入口已确定：此后的失败只在该入口上按退避重试。确定性错误（auth/config）说明这个入口
+    # 在当前 CLI 下根本不可用，才继续沿候选序换人。
     max_retries = int(pool_cfg.get("rate_limit_retries", 5))
-    locked = False
-    for entry in entries:
+    for entry in entries[entries.index(chosen):]:
         key = model_pool.key_for(entry)
         if not key:
-            log_event("missing_api_key", entry=entry["id"], api_key_env=entry.get("api_key_env"))
-            model_pool.mark_failure(
-                state, entry, model_pool.ModelError("auth", 0, 0, "missing key"), pool_cfg
-            )
             continue
-
         retries = 0
+        switch = False
         while True:
             attempts += 1
             model_pool.mark_used(state, entry)
@@ -803,68 +849,51 @@ def main() -> None:
             final = result
             if result["status"] == "complete":
                 model_pool.mark_success(state, entry)
-                locked = True
                 break
 
             error = classify_log(read_log())
-
-            if not result.get("first_turn"):
-                # 首轮没有正常响应：与探测失败同一套计罚，立刻换下一个 endpoint。
-                # 不在原地重试——重试要再付一次启动成本，而结论不会变。
-                failure = error or model_pool.ModelError(
-                    "upstream", 0, 0, str(result.get("reason") or "")
-                )
-                log_event(
-                    "first_turn_error",
-                    attempt=attempts,
-                    entry=entry["id"],
-                    kind=failure.kind,
-                    status=failure.status,
-                    reason=result.get("reason"),
-                )
-                model_pool.mark_failure(state, entry, failure, pool_cfg)
-                final = {**final, "reason": f"first turn {failure.kind}: {result.get('reason')}"[:160]}
+            if not error:
                 break
-
-            # 首轮正常：锁定该 endpoint，之后的失败只在同一 endpoint 上按退避重试。
-            locked = True
-            if error:
-                log_event(
-                    "codex_error",
-                    attempt=attempts,
-                    entry=entry["id"],
-                    kind=error.kind,
-                    status=error.status,
-                )
-                model_pool.mark_failure(state, entry, error, pool_cfg)
-                final = {**final, "reason": failure_reason(error, retries)}
-                if error.kind in ("rate", "upstream", "network") and retries < max_retries:
-                    wait = rate_wait_seconds(error, pool_cfg)
-                    remaining = deadline - time.monotonic()
-                    if remaining > wait + 120:
-                        retries += 1
-                        log_event(
-                            "codex_retry",
-                            attempt=attempts,
-                            entry=entry["id"],
-                            kind=error.kind,
-                            retry=retries,
-                            max_retries=max_retries,
-                            wait_sec=wait,
-                        )
-                        time.sleep(wait)
-                        continue
+            log_event(
+                "codex_error",
+                attempt=attempts,
+                entry=entry["id"],
+                kind=error.kind,
+                status=error.status,
+            )
+            model_pool.mark_failure(state, entry, error, pool_cfg)
+            final = {**final, "reason": failure_reason(error, retries)}
+            if error.kind in ("auth", "config"):
+                log_event("entry_unusable", attempt=attempts, entry=entry["id"], kind=error.kind)
+                switch = True
+                break
+            if error.kind in ("rate", "upstream", "network") and retries < max_retries:
+                wait = rate_wait_seconds(error, pool_cfg)
+                remaining = deadline - time.monotonic()
+                if remaining > wait + 120:
+                    retries += 1
                     log_event(
-                        "codex_retry_skip",
+                        "codex_retry",
                         attempt=attempts,
                         entry=entry["id"],
                         kind=error.kind,
+                        retry=retries,
+                        max_retries=max_retries,
                         wait_sec=wait,
-                        remaining_sec=round(remaining),
                     )
+                    time.sleep(wait)
+                    continue
+                log_event(
+                    "codex_retry_skip",
+                    attempt=attempts,
+                    entry=entry["id"],
+                    kind=error.kind,
+                    wait_sec=wait,
+                    remaining_sec=round(remaining),
+                )
             break
 
-        if locked:
+        if final.get("status") == "complete" or not switch:
             break
 
     final["secret_scan"] = scan_outputs()

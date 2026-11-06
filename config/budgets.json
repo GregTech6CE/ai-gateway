@@ -13,7 +13,7 @@
       "max_turns": 0,
       "max_tokens": 0,
       "loop_repeat_threshold": 3,
-      "first_response_seconds": 180
+      "stall_seconds": 180
     },
     "artifacts": {
       "retention_days": 30,
