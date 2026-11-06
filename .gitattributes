@@ -1,0 +1,17 @@
+# 统一行尾：仓库内文本一律 LF，Windows 检出也不会产生整文件差异。
+* text=auto eol=lf
+
+# 图像与归档按二进制处理，不做行尾转换。
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.jar binary
+*.zip binary
+
+# 凭据文件必须原样保存，任何转换都会破坏其格式。
+*.pem -text
+*.key -text
+*.p12 -text
+*.pfx -text
+*.jks -text
