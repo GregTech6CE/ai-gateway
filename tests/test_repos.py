@@ -9,25 +9,25 @@ import common  # noqa: E402
 
 
 class RepoConfigTest(unittest.TestCase):
-    def test_lookup_is_case_insensitive_and_merges_bot(self):
-        cfg = common.load_repo("Tanimodori/GregTech6")
-        self.assertEqual(cfg["_repo"], "Tanimodori/GregTech6")
-        self.assertEqual(cfg["_key"], "tanimodori/gregtech6")
-        self.assertEqual(cfg["bot_login"], "lily-chan-bot[bot]")
-        self.assertEqual(cfg["bot_mention"], "@lily-chan-bot")
-        self.assertTrue(cfg["enabled"])
-        self.assertNotIn("issue_repo", cfg)
-        self.assertNotIn("app_key_env", cfg)
+    def test_lookup_is_case_insensitive(self):
+        for name in ("GregTech6CE/GregTech6", "gregtech6ce/gregtech6", " GREGTECH6CE/GREGTECH6 "):
+            cfg = common.load_repo(name)
+            self.assertEqual(cfg["_repo"], name)
+            self.assertEqual(cfg["_key"], "gregtech6ce/gregtech6")
+            self.assertTrue(cfg["enabled"])
 
-    def test_org_repo_uses_its_own_bot(self):
+    def test_entry_carries_its_own_bot_identity(self):
         cfg = common.load_repo("GregTech6CE/GregTech6")
-        self.assertTrue(cfg["enabled"])
         self.assertEqual(cfg["bot_login"], "gt6ce-bot[bot]")
         self.assertEqual(cfg["bot_mention"], "@gt6ce-bot")
 
     def test_unknown_repo_fails_closed(self):
         with self.assertRaises(SystemExit):
             common.load_repo("attacker/unknown")
+
+    def test_empty_repo_fails_closed(self):
+        with self.assertRaises(SystemExit):
+            common.load_repo("")
 
 
 if __name__ == "__main__":

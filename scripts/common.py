@@ -29,7 +29,8 @@ def load_json(path: str | Path):
 def dump_json(path: str | Path, obj) -> None:
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(obj, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(json.dumps(obj, ensure_ascii=False, indent=2) + "\n")
 
 
 def sha256_text(text: str) -> str:
@@ -42,7 +43,7 @@ def request(method: str, path: str, token: str, data=None, timeout: int = 30):
     headers = {
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
-        "User-Agent": "lily-chan-bot",
+        "User-Agent": "gt6ce-ai-gateway",
         "Content-Type": "application/json",
     }
     if token:

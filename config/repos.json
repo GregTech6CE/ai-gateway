@@ -1,49 +1,9 @@
 {
   "bot": {
-    "login": "lily-chan-bot[bot]",
-    "mention": "@lily-chan-bot"
+    "login": "gt6ce-bot[bot]",
+    "mention": "@gt6ce-bot"
   },
   "repos": {
-    "tanimodori/gregtech6": {
-      "enabled": true,
-      "bot_login": "lily-chan-bot[bot]",
-      "bot_mention": "@lily-chan-bot",
-      "code_repo": "GregTech6CE/GregTech6",
-      "code_ref_mode": "tag",
-      "tag_template": "v{version}",
-      "fallback_ref": "master",
-      "reject": {
-        "only": [
-          "spam",
-          "out_of_scope"
-        ],
-        "min_confidence": 0.9
-      },
-      "model_pool": "shared",
-      "prompt_profile": "gregtech6",
-      "extra_code_refs": [],
-      "triage": {
-        "process_only": [
-          [
-            "bug"
-          ]
-        ],
-        "write_only": [
-          "bug",
-          "crash",
-          "parity",
-          "translation",
-          "needs info",
-          "1.20.1",
-          "1.21.1",
-          "needs triage"
-        ],
-        "triage_labels": [
-          "needs triage"
-        ],
-        "remove_after_triage": true
-      }
-    },
     "gregtech6ce/gregtech6": {
       "enabled": true,
       "bot_login": "gt6ce-bot[bot]",

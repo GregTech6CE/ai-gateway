@@ -31,7 +31,7 @@ def safe_name(url: str) -> str:
 
 
 def download(url: str, target: Path) -> None:
-    request = urllib.request.Request(url, headers={"User-Agent": "lily-chan-bot"})
+    request = urllib.request.Request(url, headers={"User-Agent": "gt6ce-ai-gateway"})
     with urllib.request.urlopen(request, timeout=60) as response:
         length = int(response.headers.get("Content-Length") or 0)
         if length and length > budget["max_attachment_bytes"]:

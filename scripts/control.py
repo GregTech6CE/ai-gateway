@@ -31,7 +31,7 @@ def post_placeholder() -> dict:
     token = env("GH_RW_TOKEN")
     request_id = env("REQUEST_ID")
     run_url = env("RUN_URL")
-    bot_name = env("BOT_NAME", "lily-chan-bot")
+    bot_name = env("BOT_NAME", "gt6ce-bot")
     body = (
         f"**{bot_name} 正在分析该 Issue...**\n\n"
         "感谢您的反馈！AI 正在自动分析该问题，预计耗时约 10 分钟。\n\n"
@@ -195,7 +195,7 @@ def download_artifact(b_repo: str, pat: str, artifact: dict, target: Path, prefi
         headers={
             "Authorization": f"Bearer {pat}",
             "Accept": "application/vnd.github+json",
-            "User-Agent": "lily-chan-bot-control",
+            "User-Agent": "gt6ce-ai-gateway-control",
         },
     )
     opener = urllib.request.build_opener(StripAuthRedirect)
