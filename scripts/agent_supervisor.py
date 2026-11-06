@@ -40,6 +40,9 @@ REQUIRED = ("issue_type", "conclusion", "confidence", "evidence", "fix_plan", "l
 CST = timezone(timedelta(hours=8))
 # 绑定未写 context 时的兜底；当前两个 endpoint 都是 1M，缺省与之一致，避免低估窗口。
 DEFAULT_CONTEXT_WINDOW = 1_048_576
+# Codex 可执行文件；命令行固定为 `exec --dangerously-bypass-approvals-and-sandbox <prompt>`。
+# 用元组而不是字符串，避免路径含空格时的拆分问题，也便于测试整体替换成脚本。
+CODEX_BIN = (os.environ.get("CODEX_BIN") or "codex",)
 
 
 def one_line(value) -> str:
@@ -56,16 +59,12 @@ def format_event(event: str, fields: dict) -> str:
         return f"可用分析入口：pool={fields.get('pool')} count={fields.get('count')} entries={entries}"
     if event == "attempt_archive":
         return f"开始 attempt {fields.get('attempt')}：entry={fields.get('entry')}"
-    if event == "probe_ok":
-        return f"probe 成功：entry={fields.get('entry')} 耗时={fields.get('elapsed_ms')}ms"
-    if event == "probe_error":
-        return f"probe 失败：entry={fields.get('entry')} kind={fields.get('kind')} status={fields.get('status')}"
-    if event == "probe_retry":
-        return f"probe 重试：{fields.get('wait_sec')}s 后，kind={fields.get('kind')}"
-    if event == "probe_retry_ok":
-        return f"probe 重试成功：entry={fields.get('entry')}"
-    if event == "probe_retry_error":
-        return f"probe 重试失败：entry={fields.get('entry')} kind={fields.get('kind')} status={fields.get('status')}"
+    if event == "first_turn_ok":
+        return f"首轮响应正常：entry={fields.get('entry')} 耗时={fields.get('elapsed_ms')}ms"
+    if event == "first_turn_timeout":
+        return f"首轮无响应超时：entry={fields.get('entry')} 已等待={fields.get('elapsed_sec')}s"
+    if event == "first_turn_error":
+        return f"首轮失败，切换入口：entry={fields.get('entry')} kind={fields.get('kind')} status={fields.get('status')} reason={fields.get('reason')}"
     if event == "codex_retry":
         return f"Codex {fields.get('kind')} 等待重试：attempt={fields.get('attempt')} entry={fields.get('entry')} retry={fields.get('retry')}/{fields.get('max_retries')} wait={fields.get('wait_sec')}s"
     if event == "codex_retry_skip":
@@ -396,6 +395,24 @@ def archive_attempt(number: int) -> None:
             path.replace(target / path.name)
 
 
+def terminate_tree(proc: subprocess.Popen, hard: bool = False) -> None:
+    """按进程组终止子进程；Windows 没有进程组信号，退回 terminate/kill。
+
+    托管 runner 是 Linux，走 `killpg` 分支，行为与原先一致；本地 Windows 调试不再因为
+    `os.getpgid` 不存在而抛 AttributeError。
+    """
+    if hasattr(os, "killpg"):
+        try:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL if hard else signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+        return
+    try:
+        proc.kill() if hard else proc.terminate()
+    except OSError:
+        pass
+
+
 def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
     prompt = build_prompt()
     (OUTPUTS / "prompt.txt").write_text(prompt, encoding="utf-8")
@@ -406,6 +423,7 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
     env["GH_TOKEN"] = GH_RO
 
     timeout_minutes = int(budget["l2"]["timeout_minutes"])
+    first_response_seconds = int(budget["l2"].get("first_response_seconds", 180))
     threshold = int(budget["l2"].get("loop_repeat_threshold", 3))
     started = time.monotonic()
     reason = "completed"
@@ -424,7 +442,7 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
 
     with open(LOG_PATH, "w", encoding="utf-8", errors="replace") as log:
         proc = subprocess.Popen(
-            ["codex", "exec", "--dangerously-bypass-approvals-and-sandbox", prompt],
+            [*CODEX_BIN, "exec", "--dangerously-bypass-approvals-and-sandbox", prompt],
             stdout=log,
             stderr=subprocess.STDOUT,
             env=env,
@@ -439,12 +457,22 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
         last_answer_size = -1
         repeats = 0
         seen_assistant = 0
+        first_response_at: float | None = None
         try:
             while proc.poll() is None:
                 time.sleep(1)
                 if time.monotonic() > deadline:
                     reason = f"timeout {timeout_minutes}min"
                     log_event("timeout", attempt=attempt, elapsed_sec=round(time.monotonic() - started, 1))
+                    break
+                if first_response_at is None and time.monotonic() - started > first_response_seconds:
+                    reason = f"no first response in {first_response_seconds}s"
+                    log_event(
+                        "first_turn_timeout",
+                        attempt=attempt,
+                        entry=entry["id"],
+                        elapsed_sec=round(time.monotonic() - started, 1),
+                    )
                     break
                 if time.monotonic() - last_check >= 5:
                     text = read_log()
@@ -455,6 +483,14 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
                         emit_assistant(block)
                     if len(blocks) > seen_assistant:
                         seen_assistant = len(blocks)
+                    if turns and first_response_at is None:
+                        first_response_at = time.monotonic()
+                        log_event(
+                            "first_turn_ok",
+                            attempt=attempt,
+                            entry=entry["id"],
+                            elapsed_ms=round((first_response_at - started) * 1000),
+                        )
                     answer_size = ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0
                     if execs > seen_exec:
                         command = last_exec_command(text)
@@ -501,21 +537,17 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
                     break
         finally:
             if proc.poll() is None:
-                try:
-                    os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
+                terminate_tree(proc)
                 try:
                     proc.wait(timeout=15)
                 except subprocess.TimeoutExpired:
-                    try:
-                        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
+                    terminate_tree(proc, hard=True)
                     proc.wait(timeout=10)
 
     elapsed = time.monotonic() - started
     text = read_log()
+    if first_response_at is None and count_turns(text):
+        first_response_at = time.monotonic()
     blocks = assistant_blocks(text, include_last=True)
     for block in blocks[seen_assistant:]:
         emit_assistant(block)
@@ -542,6 +574,7 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
         "tokens": tokens,
         "exit_code": code,
         "entry_id": entry["id"],
+        "first_turn": first_response_at is not None or status == "complete",
         "answer_md_bytes": ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0,
         "answer_json": ANSWER_JSON.exists(),
     }
@@ -747,7 +780,10 @@ def main() -> None:
             )
             return
 
-    # 候选按「最久未用」排序；逐个尝试，失败的 endpoint 会被记为冷却，下次自然轮换。
+    # 候选按「最久未用」排序，逐个尝试。不做独立探测：第一次对话本身就是探活，首轮没有
+    # 正常响应就换下一个 endpoint；一旦有正常响应即锁定，后续失败只在该 endpoint 上重试。
+    max_retries = int(pool_cfg.get("rate_limit_retries", 5))
+    locked = False
     for entry in entries:
         key = model_pool.key_for(entry)
         if not key:
@@ -756,103 +792,80 @@ def main() -> None:
                 state, entry, model_pool.ModelError("auth", 0, 0, "missing key"), pool_cfg
             )
             continue
-        model_pool.mark_used(state, entry)
-        attempts += 1
-        archive_attempt(attempts)
-        log_event("attempt_archive", attempt=attempts, entry=entry["id"])
-        probe_started = time.monotonic()
-        try:
-            model_pool.probe(entry, key, pool_cfg)
-            log_event(
-                "probe_ok",
-                attempt=attempts,
-                entry=entry["id"],
-                elapsed_ms=round((time.monotonic() - probe_started) * 1000),
-            )
-        except model_pool.ModelError as exc:
-            log_event(
-                "probe_error",
-                attempt=attempts,
-                entry=entry["id"],
-                kind=exc.kind,
-                status=exc.status,
-            )
-            model_pool.mark_failure(state, entry, exc, pool_cfg)
-            if exc.kind in ("rate", "upstream", "network") and time.monotonic() < deadline - 120:
-                wait = min(max(int(exc.retry_after or 15), 5), 60)
-                log_event("probe_retry", attempt=attempts, wait_sec=wait, kind=exc.kind)
-                time.sleep(wait)
-                try:
-                    model_pool.probe(entry, key, pool_cfg)
-                    log_event("probe_retry_ok", attempt=attempts, entry=entry["id"])
-                except model_pool.ModelError as second:
-                    log_event(
-                        "probe_retry_error",
-                        attempt=attempts,
-                        entry=entry["id"],
-                        kind=second.kind,
-                        status=second.status,
-                    )
-                    model_pool.mark_failure(state, entry, second, pool_cfg)
-                    final = {**final, "reason": f"probe: {second.kind}", "entry_id": entry["id"]}
-                    continue
-            else:
-                final = {**final, "reason": f"probe: {exc.kind}", "entry_id": entry["id"]}
-                continue
 
         retries = 0
-        last_error: model_pool.ModelError | None = None
-        max_retries = int(pool_cfg.get("rate_limit_retries", 5))
         while True:
+            attempts += 1
+            model_pool.mark_used(state, entry)
+            archive_attempt(attempts)
+            log_event("attempt_archive", attempt=attempts, entry=entry["id"])
             result = run_codex(entry, key, deadline, attempts)
             final = result
             if result["status"] == "complete":
                 model_pool.mark_success(state, entry)
+                locked = True
                 break
+
             error = classify_log(read_log())
-            if not error:
-                break
-            last_error = error
-            log_event(
-                "codex_error",
-                attempt=attempts,
-                entry=entry["id"],
-                kind=error.kind,
-                status=error.status,
-            )
-            model_pool.mark_failure(state, entry, error, pool_cfg)
-            if error.kind in ("rate", "upstream", "network") and retries < max_retries:
-                wait = rate_wait_seconds(error, pool_cfg)
-                remaining = deadline - time.monotonic()
-                if remaining > wait + 120:
-                    retries += 1
-                    log_event(
-                        "codex_retry",
-                        attempt=attempts,
-                        entry=entry["id"],
-                        kind=error.kind,
-                        retry=retries,
-                        max_retries=max_retries,
-                        wait_sec=wait,
-                    )
-                    time.sleep(wait)
-                    attempts += 1
-                    archive_attempt(attempts)
-                    log_event("attempt_archive", attempt=attempts, entry=entry["id"])
-                    continue
+
+            if not result.get("first_turn"):
+                # 首轮没有正常响应：与探测失败同一套计罚，立刻换下一个 endpoint。
+                # 不在原地重试——重试要再付一次启动成本，而结论不会变。
+                failure = error or model_pool.ModelError(
+                    "upstream", 0, 0, str(result.get("reason") or "")
+                )
                 log_event(
-                    "codex_retry_skip",
+                    "first_turn_error",
+                    attempt=attempts,
+                    entry=entry["id"],
+                    kind=failure.kind,
+                    status=failure.status,
+                    reason=result.get("reason"),
+                )
+                model_pool.mark_failure(state, entry, failure, pool_cfg)
+                final = {**final, "reason": f"first turn {failure.kind}: {result.get('reason')}"[:160]}
+                break
+
+            # 首轮正常：锁定该 endpoint，之后的失败只在同一 endpoint 上按退避重试。
+            locked = True
+            if error:
+                log_event(
+                    "codex_error",
                     attempt=attempts,
                     entry=entry["id"],
                     kind=error.kind,
-                    wait_sec=wait,
-                    remaining_sec=round(remaining),
+                    status=error.status,
                 )
+                model_pool.mark_failure(state, entry, error, pool_cfg)
+                final = {**final, "reason": failure_reason(error, retries)}
+                if error.kind in ("rate", "upstream", "network") and retries < max_retries:
+                    wait = rate_wait_seconds(error, pool_cfg)
+                    remaining = deadline - time.monotonic()
+                    if remaining > wait + 120:
+                        retries += 1
+                        log_event(
+                            "codex_retry",
+                            attempt=attempts,
+                            entry=entry["id"],
+                            kind=error.kind,
+                            retry=retries,
+                            max_retries=max_retries,
+                            wait_sec=wait,
+                        )
+                        time.sleep(wait)
+                        continue
+                    log_event(
+                        "codex_retry_skip",
+                        attempt=attempts,
+                        entry=entry["id"],
+                        kind=error.kind,
+                        wait_sec=wait,
+                        remaining_sec=round(remaining),
+                    )
             break
-        if result.get("status") == "complete":
+
+        if locked:
             break
-        if last_error:
-            final = {**final, "reason": failure_reason(last_error, retries)}
 
     final["secret_scan"] = scan_outputs()
     write_result(final, state, attempts)

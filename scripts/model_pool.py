@@ -219,17 +219,6 @@ def chat(
     return data["choices"][0]["message"]["content"]
 
 
-def probe(entry: dict, key: str, cfg: dict) -> None:
-    chat(
-        entry,
-        key,
-        [{"role": "user", "content": "ping"}],
-        max_tokens=int(entry.get("probe_max_tokens", cfg.get("analysis_probe_max_tokens", 8))),
-        temperature=0,
-        timeout=30,
-    )
-
-
 def select(pool: dict, role: str, state: dict) -> tuple[dict, str]:
     for entry in candidates(pool, role, state):
         return entry, key_for(entry)

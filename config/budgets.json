@@ -12,7 +12,8 @@
       "timeout_minutes": 60,
       "max_turns": 0,
       "max_tokens": 0,
-      "loop_repeat_threshold": 3
+      "loop_repeat_threshold": 3,
+      "first_response_seconds": 180
     },
     "artifacts": {
       "retention_days": 30,
@@ -24,7 +25,6 @@
       "early_max_minutes": 1440,
       "late_base_minutes": 5,
       "late_max_minutes": 360,
-      "analysis_probe_max_tokens": 8,
       "rate_limit_retries": 5,
       "rate_limit_wait_seconds": 60,
       "rate_limit_min_wait_seconds": 5,

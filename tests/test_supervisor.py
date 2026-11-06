@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -262,6 +263,76 @@ class SecretScanTest(unittest.TestCase):
         self.assertNotIn("mistral-secret-value-0001", log)
         self.assertNotIn("c" * 24, log)
         self.assertIn("[REDACTED]", log)
+
+
+class FirstTurnTest(unittest.TestCase):
+    """首轮即探活：没有正常响应不锁定入口，有响应即视为该入口可用。"""
+
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        outputs = root / "outputs"
+        outputs.mkdir()
+        self.root = root
+
+        for name, value in {
+            "OUTPUTS": outputs,
+            "LOG_PATH": outputs / "agent_output.log",
+            "ANSWER_MD": outputs / "answer.md",
+            "ANSWER_JSON": outputs / "answer.json",
+            "SUPERVISOR_LOG": outputs / "supervisor.log",
+        }.items():
+            patcher = mock.patch.object(supervisor, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+        # 只验证运行期看门狗，不写仓库内的 .codex/config.toml。
+        config = mock.patch.object(
+            supervisor,
+            "write_codex_config",
+            lambda entry, key: {"CODEX_HOME": str(root), "LLM_API_KEY": key, "GH_TOKEN": ""},
+        )
+        config.start()
+        self.addCleanup(config.stop)
+
+        budget = mock.patch.dict(
+            supervisor.budget["l2"], {"first_response_seconds": 1, "timeout_minutes": 1}
+        )
+        budget.start()
+        self.addCleanup(budget.stop)
+
+    def fake_codex(self, body: str) -> None:
+        script = self.root / "fake_codex.py"
+        script.write_text(body, encoding="utf-8")
+        patcher = mock.patch.object(supervisor, "CODEX_BIN", (sys.executable, str(script)))
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def run_once(self) -> dict:
+        entry = {"id": "fake", "model": "fake-model"}
+        return supervisor.run_codex(entry, "key", time.monotonic() + 60, 1)
+
+    def test_silent_endpoint_yields_no_first_turn(self):
+        self.fake_codex("import time\ntime.sleep(30)\n")
+        result = self.run_once()
+        self.assertFalse(result["first_turn"])
+        self.assertIn("first response", result["reason"])
+        self.assertEqual(result["status"], "failed")
+
+    def test_first_response_locks_endpoint(self):
+        self.fake_codex('print("codex")\nprint("reading the log")\nprint("exec")\nprint("ls")\n')
+        result = self.run_once()
+        self.assertTrue(result["first_turn"])
+        self.assertEqual(result["turns"], 1)
+
+    def test_error_without_response_is_not_a_first_turn(self):
+        self.fake_codex('print("error: 401 Unauthorized")\n')
+        result = self.run_once()
+        self.assertFalse(result["first_turn"])
+        error = supervisor.classify_log(supervisor.read_log())
+        self.assertIsNotNone(error)
+        self.assertEqual(error.kind, "auth")
 
 
 if __name__ == "__main__":
