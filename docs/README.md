@@ -11,6 +11,7 @@
 | [auth.md](auth.md) | 谁可以触发、触发被如何校验、本仓库可以写什么 |
 | [dispatch.md](dispatch.md) | 调用方与本仓库之间的参数契约、run 语义与失败判定 |
 | [jobs/bug-issue-analysis.md](jobs/bug-issue-analysis.md) | 一次 bug issue 分析经过哪些 job、产出什么、如何中止 |
+| [knowledge-base/codex.md](knowledge-base/codex.md) | Codex CLI 的调用形态、事件流、会话续接与配置覆盖 |
 
 根 `AGENTS.md` 是改动约束与安全规则的入口，本目录的 `AGENTS.md` 只管文档写法。
 
@@ -18,6 +19,9 @@
 
 一份设计事实只写在一处：授权写在 `auth.md`，参数与 run 语义写在 `dispatch.md`，
 job 内部步骤写在各 job 文档。其余文档只引用，不复述。
+
+`knowledge-base/` 记录外部工具自身的事实（版本、命令、协议），不描述本仓库设计；引用它
+的文档应给出结论，而不是让读者自己去翻。
 
 写入前确认：这条信息能否只凭本公开仓库核对。不能核对的，用名称或机制表述，或删除。
 
