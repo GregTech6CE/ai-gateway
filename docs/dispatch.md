@@ -32,6 +32,7 @@
 | 动作 | 执行方 | 说明 |
 |---|---|---|
 | 创建占位评论 | 调用方 | 在 dispatch 之前，回传 `placeholder_comment_id` |
+| 更新占位评论链接 | 调用方 | dispatch 成功后立即 PATCH，把链接指向 B 的 run |
 | 校验与快照 | 本仓库 `gate` | 只读；不写 issue |
 | 分析 | 本仓库 `analysis` | 产出 artifact |
 | 渲染、扫描、写回 | 本仓库 `finalize` | 唯一写 issue 的位置 |
@@ -39,6 +40,11 @@
 占位评论由调用方创建的原因：写权限只存在于调用方与本仓库 `finalize` 两处，而
 `finalize` 需要一条已存在的评论作为 PATCH 目标。占位评论同时承载 `requested` 标记，
 使 `gate` 能在并发窗口内识别在途请求。
+
+占位评论先指向调用方 run。dispatch 返回 `workflow_run_id` 后，调用方立即 PATCH 该评论，
+把链接换成执行仓库的 run。PATCH 前读取评论并确认仍带本次 `requested` 标记；若
+`finalize` 已写入结论则跳过，避免覆盖。更新失败只记日志，不影响已入队的分析，
+`finalize` 仍会在写回时再次 PATCH。
 
 `request_id` 解决的是同一个 issue 被重复触发时"把自己刚产生的标记误判为历史标记"的
 问题：与当前 `request_id` 相同的标记不计入幂等与配额判断。
@@ -63,7 +69,10 @@
 `404` 表示该 ref 上没有该 workflow，或 token 无权访问本仓库；`422` 表示 inputs 缺失或
 非法。`401`/`403` 与 App 私钥和 App 安装状态有关，属于凭据问题，不重试。
 
-dispatch 成功后，调用方的职责在写回层面结束：结论只能由本仓库的 `finalize` 发布。
+占位评论的链接更新失败不算 dispatch 失败：B 已入队，`finalize` 会用 `B_RUN_URL` 再写一次。
+
+dispatch 成功后，调用方只更新自己创建的占位评论链接，写回层面的职责到此结束：结论只能
+由本仓库的 `finalize` 发布。
 `scripts/control.py` 保留两个未在触发模板中启用的子命令：`finish` 轮询 run、下载 artifact、
 在结果缺失时写 fallback `result.json`；`cleanup` 删除占位评论。当前模板只调用 `start`，
 这两个子命令是兼容路径，启用它们不会获得写回权。

@@ -25,21 +25,50 @@ def api(method: str, path: str, token: str, data=None):
     return c.request(method, path, token, data)
 
 
-def post_placeholder() -> dict:
+def placeholder_body(run_url: str) -> str:
     repo = env("REPO")
     issue = env("ISSUE")
-    token = env("GH_RW_TOKEN")
     request_id = env("REQUEST_ID")
-    run_url = env("RUN_URL")
     bot_name = env("BOT_NAME", "gt6ce-bot")
-    body = (
+    return (
         f"**{bot_name} 正在分析该 Issue...**\n\n"
         "感谢您的反馈！AI 正在自动分析该问题，预计耗时约 10 分钟。\n\n"
         "---\n\n"
         + (f"[GitHub Action 运行记录]({run_url})\n\n" if run_url else "")
         + c.marker("requested", repo=repo, issue=issue, request=request_id)
     )
+
+
+def post_placeholder() -> dict:
+    repo = env("REPO")
+    issue = env("ISSUE")
+    token = env("GH_RW_TOKEN")
+    body = placeholder_body(env("RUN_URL"))
     return api("POST", f"/repos/{repo}/issues/{issue}/comments", token, {"body": body})
+
+
+def update_placeholder(comment_id: str, run_url: str) -> None:
+    if not comment_id:
+        return
+    repo = env("REPO")
+    token = env("GH_RW_TOKEN")
+    request_id = env("REQUEST_ID")
+    try:
+        current = api("GET", f"/repos/{repo}/issues/comments/{comment_id}", token)
+        markers = c.parse_markers(current.get("body") or "")
+        if not any(
+            marker.get("kind") == "requested" and marker.get("request") == request_id
+            for marker in markers
+        ):
+            return
+        api(
+            "PATCH",
+            f"/repos/{repo}/issues/comments/{comment_id}",
+            token,
+            {"body": placeholder_body(run_url)},
+        )
+    except Exception as exc:
+        print(f"placeholder update failed: {exc}", file=sys.stderr)
 
 
 def precheck(repo: str, issue: str, token: str) -> tuple[str, str]:
@@ -121,6 +150,7 @@ def start() -> None:
                 pass
         raise SystemExit(f"dispatch did not return workflow_run_id: {result}")
     run_url = f"https://github.com/{b_repo}/actions/runs/{run_id}"
+    update_placeholder(str(comment.get("id", "")), run_url)
     c.set_output("comment_id", str(comment.get("id", "")))
     c.set_output("run_id", str(run_id))
     c.set_output("run_url", str(run_url))
