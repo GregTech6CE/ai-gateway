@@ -111,6 +111,95 @@ class PlaceholderTest(unittest.TestCase):
             control.update_placeholder("99", "https://example.test/runs/1")
 
 
+class DebounceTest(unittest.TestCase):
+    def test_fingerprint_uses_updated_at_comments_and_body(self):
+        issue = {
+            "updated_at": "2026-11-07T00:00:00Z",
+            "comments": 3,
+            "title": "title",
+            "body": "body",
+        }
+        with mock.patch.object(control, "api", return_value=issue):
+            fingerprint = control.issue_fingerprint("o/r", "7", "token")
+        self.assertEqual(fingerprint[0], "2026-11-07T00:00:00Z")
+        self.assertEqual(fingerprint[1], 3)
+        self.assertEqual(fingerprint[2], control.c.sha256_text("title\nbody"))
+
+    def test_wait_returns_after_one_stable_window(self):
+        env = {
+            "GITHUB_EVENT_NAME": "issues",
+            "DEBOUNCE_SECONDS": "60",
+            "DEBOUNCE_MAX_SECONDS": "300",
+        }
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+            control, "issue_fingerprint", return_value=("t", 1, "h")
+        ), mock.patch.object(control.time, "sleep") as sleep:
+            control.wait_for_stable("o/r", "7", "token")
+        sleep.assert_called_once_with(60)
+
+    def test_wait_restarts_when_issue_changes(self):
+        env = {
+            "GITHUB_EVENT_NAME": "issues",
+            "DEBOUNCE_SECONDS": "60",
+            "DEBOUNCE_MAX_SECONDS": "300",
+        }
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+            control,
+            "issue_fingerprint",
+            side_effect=[("a", 1, "h"), ("b", 2, "h"), ("b", 2, "h")],
+        ), mock.patch.object(control.time, "sleep") as sleep, redirect_stderr(io.StringIO()):
+            control.wait_for_stable("o/r", "7", "token")
+        self.assertEqual(sleep.call_count, 2)
+
+    def test_wait_stops_at_cap(self):
+        env = {
+            "GITHUB_EVENT_NAME": "issues",
+            "DEBOUNCE_SECONDS": "60",
+            "DEBOUNCE_MAX_SECONDS": "120",
+        }
+        clock = [0.0]
+
+        def fake_sleep(seconds):
+            clock[0] += seconds
+
+        def fake_monotonic():
+            return clock[0]
+
+        stderr = io.StringIO()
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+            control,
+            "issue_fingerprint",
+            side_effect=[("a", 1, "h"), ("b", 2, "h"), ("c", 3, "h")],
+        ), mock.patch.object(
+            control.time, "sleep", side_effect=fake_sleep
+        ), mock.patch.object(
+            control.time, "monotonic", side_effect=fake_monotonic
+        ), redirect_stderr(stderr):
+            control.wait_for_stable("o/r", "7", "token")
+        self.assertIn("debounce cap", stderr.getvalue())
+
+    def test_wait_skips_manual_dispatch(self):
+        env = {"GITHUB_EVENT_NAME": "workflow_dispatch"}
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+            control, "issue_fingerprint"
+        ) as fingerprint, mock.patch.object(control.time, "sleep") as sleep:
+            control.wait_for_stable("o/r", "7", "token")
+        fingerprint.assert_not_called()
+        sleep.assert_not_called()
+
+    def test_wait_disabled_by_zero_interval(self):
+        env = {
+            "GITHUB_EVENT_NAME": "issues",
+            "DEBOUNCE_SECONDS": "0",
+            "DEBOUNCE_MAX_SECONDS": "300",
+        }
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+            control, "issue_fingerprint"
+        ) as fingerprint:
+            control.wait_for_stable("o/r", "7", "token")
+        fingerprint.assert_not_called()
+
+
 class StartTest(unittest.TestCase):
     def test_start_updates_placeholder_after_dispatch(self):
         env = {
@@ -135,6 +224,8 @@ class StartTest(unittest.TestCase):
         with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
             control, "precheck", return_value=("", "title")
         ), mock.patch.object(
+            control, "wait_for_stable"
+        ), mock.patch.object(
             control, "post_placeholder", return_value={"id": 99}
         ), mock.patch.object(
             control, "api", side_effect=fake_api
@@ -152,6 +243,59 @@ class StartTest(unittest.TestCase):
             [("99", "https://github.com/GregTech6CE/ai-gateway/actions/runs/123")],
         )
         self.assertEqual(dispatched["data"]["inputs"]["placeholder_comment_id"], "99")
+
+    def test_start_waits_before_placeholder(self):
+        env = {
+            "REPO": "o/r",
+            "ISSUE": "7",
+            "EVENT": "issues",
+            "REQUEST_ID": "42",
+            "DRY_RUN": "false",
+            "B_REPO": "GregTech6CE/ai-gateway",
+            "B_PAT": "pat",
+            "GH_RW_TOKEN": "token",
+        }
+        calls = []
+
+        def fake_precheck(repo, issue, token):
+            calls.append("precheck")
+            return "", "title"
+
+        def fake_wait(repo, issue, token):
+            calls.append("wait")
+
+        def fake_post():
+            calls.append("post")
+            return {"id": 99}
+
+        def fake_api(method, path, token, data=None):
+            if method == "POST" and path.endswith("/dispatches"):
+                calls.append("dispatch")
+                return {"workflow_run_id": 123}
+            raise AssertionError((method, path))
+
+        def fake_update(comment_id, run_url):
+            calls.append("update")
+
+        with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
+            control, "precheck", side_effect=fake_precheck
+        ), mock.patch.object(
+            control, "wait_for_stable", side_effect=fake_wait
+        ), mock.patch.object(
+            control, "post_placeholder", side_effect=fake_post
+        ), mock.patch.object(
+            control, "api", side_effect=fake_api
+        ), mock.patch.object(
+            control, "update_placeholder", side_effect=fake_update
+        ), mock.patch.object(
+            control.c, "set_output"
+        ), redirect_stdout(io.StringIO()):
+            control.start()
+
+        self.assertEqual(
+            calls,
+            ["precheck", "wait", "precheck", "post", "dispatch", "update"],
+        )
 
     def test_start_dry_run_does_not_post_placeholder(self):
         env = {
@@ -173,6 +317,8 @@ class StartTest(unittest.TestCase):
 
         with mock.patch.dict(os.environ, env, clear=False), mock.patch.object(
             control, "precheck", return_value=("", "title")
+        ), mock.patch.object(
+            control, "wait_for_stable"
         ), mock.patch.object(
             control, "post_placeholder"
         ) as post, mock.patch.object(

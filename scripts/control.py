@@ -96,6 +96,39 @@ def precheck(repo: str, issue: str, token: str) -> tuple[str, str]:
     return "", title
 
 
+def issue_fingerprint(repo: str, issue: str, token: str) -> tuple[str, int, str]:
+    data = api("GET", f"/repos/{repo}/issues/{issue}", token)
+    body = data.get("body") or ""
+    title = data.get("title") or ""
+    return (
+        str(data.get("updated_at") or ""),
+        int(data.get("comments") or 0),
+        c.sha256_text(title + "\n" + body),
+    )
+
+
+def wait_for_stable(repo: str, issue: str, token: str) -> None:
+    if os.environ.get("GITHUB_EVENT_NAME") == "workflow_dispatch":
+        return
+    interval = int(env("DEBOUNCE_SECONDS", "60"))
+    max_wait = int(env("DEBOUNCE_MAX_SECONDS", "300"))
+    if interval <= 0 or max_wait <= 0:
+        return
+    deadline = time.monotonic() + max_wait
+    fingerprint = issue_fingerprint(repo, issue, token)
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            print("debounce cap reached; dispatching anyway", file=sys.stderr)
+            return
+        time.sleep(min(interval, remaining))
+        current = issue_fingerprint(repo, issue, token)
+        if current == fingerprint:
+            return
+        print("issue changed; restarting debounce window", file=sys.stderr)
+        fingerprint = current
+
+
 def start() -> None:
     repo = env("REPO")
     issue = env("ISSUE")
@@ -107,6 +140,11 @@ def start() -> None:
     b_pat = env("B_PAT")
     if not b_pat:
         raise SystemExit("B_PAT missing")
+    skip, issue_title = precheck(repo, issue, env("GH_RW_TOKEN"))
+    if skip:
+        print(json.dumps({"skipped": skip, "repo": repo, "issue": issue}, ensure_ascii=False))
+        return
+    wait_for_stable(repo, issue, env("GH_RW_TOKEN"))
     skip, issue_title = precheck(repo, issue, env("GH_RW_TOKEN"))
     if skip:
         print(json.dumps({"skipped": skip, "repo": repo, "issue": issue}, ensure_ascii=False))
