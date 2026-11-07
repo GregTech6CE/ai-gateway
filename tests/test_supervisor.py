@@ -4,6 +4,7 @@ import sys
 import tempfile
 import time
 import unittest
+import urllib.request
 from pathlib import Path
 from unittest import mock
 
@@ -291,7 +292,11 @@ class RunCodexTest(unittest.TestCase):
         config = mock.patch.object(
             supervisor,
             "write_codex_config",
-            lambda entry, key: {"CODEX_HOME": str(root), "LLM_API_KEY": key, "GH_TOKEN": ""},
+            lambda entry, key, bridge_base_url=None: {
+                "CODEX_HOME": str(root),
+                "LLM_API_KEY": key,
+                "GH_TOKEN": "",
+            },
         )
         config.start()
         self.addCleanup(config.stop)
@@ -367,6 +372,30 @@ class ConfigErrorTest(unittest.TestCase):
         error = supervisor.classify_log(log)
         self.assertIsNotNone(error)
         self.assertEqual(error.kind, "config")
+
+
+class BridgeStartTest(unittest.TestCase):
+    def test_bridge_starts_serves_health_and_stops(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(supervisor, "BRIDGE_LOG", Path(directory) / "bridge.log"):
+                with mock.patch.dict(os.environ, {"MODEL_KEY_CLINEPASS": "dummy"}):
+                    bridge = supervisor.start_bridge(
+                        {
+                            "id": "clinepass",
+                            "base_url": "http://127.0.0.1:9/v1",
+                            "model": "m",
+                            "api_key_env": "MODEL_KEY_CLINEPASS",
+                            "headers": {"X-Response-Format": "openai"},
+                        }
+                    )
+                    try:
+                        with urllib.request.urlopen(
+                            f"http://127.0.0.1:{bridge.port}/health", timeout=5
+                        ) as response:
+                            self.assertEqual(response.status, 200)
+                    finally:
+                        bridge.stop()
+                    self.assertIsNotNone(bridge.process.poll())
 
 
 if __name__ == "__main__":

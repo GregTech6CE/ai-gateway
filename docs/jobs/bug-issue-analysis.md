@@ -89,7 +89,8 @@ failure）：
   兜底——隔离来自凭据缺失，不来自运行时限制。
 - **网络访问**：模型 endpoint 的 `base_url`、`api.github.com`（下载 artifact、轮询
   `bot:stop`）、`github.com`（两个 mirror 的克隆与附件下载）、npm registry（安装固定版本
-  Codex CLI）、PyPI（安装固定版本的 `pyyaml` 与 `pillow`）。
+  Codex CLI）、PyPI（安装固定版本的 `pyyaml` 与 `pillow`）。supervisor 还会在 `127.0.0.1`
+  的临时端口启动协议桥，仅本机可访问。
 - **Token 权限**：持有 `MODEL_KEY_MISTRAL` 与 `MODEL_KEY_CLINEPASS` 两个 key（切换
   endpoint 时无需重新注入），Codex 只通过 `LLM_API_KEY` 使用当前 endpoint 的一个。不持有
   App 私钥、App token 与 `issues: write`；`GITHUB_TOKEN`、`SELF_TOKEN` 被移除，`GH_TOKEN`
@@ -113,15 +114,29 @@ failure）：
    入口可用、只是没给出结论，按 `in_scope` 继续。全部候选都失败时以「无入口通过 preflight」
    结束，不做无模型的降级。判定发生在任何 agent 代码执行之前，因此这条路径没有工具。
 6. 运行 agent。prompt 由 `prompts/common/` 与 `prompts/repos/<profile>/` 组合，组合结果
-   写入 `prompt.txt` 以便复核。agent 按四个节点增量写 `answer.md`，最后写 `answer.json`。
-   入口已由 preflight 锁定，此后的失败只在同一个入口上按 `rate_limit_retries` 退避重试；
-   只有确定性错误（`auth`/`config`，例如该 CLI 版本不支持某个 provider 配置）才继续沿
-   候选序换人。`l2.stall_seconds`（当前 180 秒）内没有任何输出即终止本次尝试：它只防
-   挂死吃掉 job 预算，不参与入口判定，也不计罚。
+   写入 `prompt.txt` 以便复核。只提供 `chat/completions` 的入口会先由 supervisor 启动本地
+   协议桥（`scripts/responses_bridge.py`），Codex 仍按 `wire_api="responses"` 连接
+   `127.0.0.1`；桥的日志写入 `bridge.log`。agent 按四个节点增量写 `answer.md`，最后写
+   `answer.json`。入口已由 preflight 锁定，此后的失败只在同一个入口上按
+   `rate_limit_retries` 退避重试；只有确定性错误（`auth`/`config`，例如该 CLI 版本不支持
+   某个 provider 配置）才继续沿候选序换人。`l2.stall_seconds`（当前 180 秒）内没有任何
+   输出即终止本次尝试：它只防挂死吃掉 job 预算，不参与入口判定，也不计罚。
 7. 扫描输出。递归遍历 `outputs/`（含按 attempt 归档的副本）并**就地脱敏**：每个文件整体
    读入后匹配，私钥块整块替换（缺 `END` 的半截块一直吞到文末），其余命中片段替换为
    `[REDACTED]`。超过扫描上限的文件只保留可扫描的前段，其余连同被切断的半行一起丢弃并
    标注，未扫描的内容不进入 artifact。命中同时记入 `secret_scan`，供 `finalize` 阻断发布。
+
+协议桥（`scripts/responses_bridge.py`）只在 endpoint 标了 `codex_bridge: true` 时启动：
+监听 `127.0.0.1` 的临时端口，Codex 的 `base_url` 指向它、`wire_api` 固定为 `responses`，
+桥再把请求转发到 endpoint 的 `base_url`。`bridge_timeout_seconds` 控制桥到上游的 socket
+超时，缺省 600 秒。覆盖范围：
+
+- 保留：文本、function tools、流式、usage、`reasoning.effort` → `reasoning_effort`、
+  `text.format` → `response_format`；`developer` 角色映射为 `system`。
+- 丢弃：`store`、`include`、`prompt_cache_key`、`client_metadata`、`reasoning.summary`。
+- 丢弃 `type: "namespace"` 工具（analysis 不使用 multi-agent）。
+- 透传 endpoint 配置里的 `headers`，例如 clinepass 需要的 `X-Response-Format: openai`。
+- 桥进程只保留当前 endpoint 的 `MODEL_KEY_*`，不继承 GitHub token。
 
 supervisor 是这一层唯一的运行时约束：墙钟上限、重复命令检测（同一条命令在 `answer.md`
 未增长时重复达到阈值即判循环）、每 60 秒检查 `bot:stop`、超时按进程组终止。它写出的每条
@@ -152,6 +167,7 @@ supervisor 按序消费：只有 preflight 失败才会走到下一个候选，�
 | `prompt.txt` | 组合后的完整提示词 | artifact 30 天 |
 | `supervisor.log` | supervisor 事件流；每行写出前就地脱敏 | artifact 30 天 |
 | `agent_output.log` | Codex 原始输出，直接落盘、不逐行处理；只在运行结束后整体扫描 | artifact 30 天 |
+| `bridge.log` | 协议桥的请求行与错误；不含凭据，随 `outputs/` 一起扫描 | artifact 30 天 |
 | `attempt-<n>/` | 上一 attempt 的归档副本，同样在扫描范围内 | artifact 30 天 |
 | artifact `analysis-<run_id>` | 扫描无失败时的整个 `outputs/` 目录 | 30 天 |
 | artifact `analysis-<run_id>-report` | 扫描失败时只上传 `result.json`（已脱敏，含状态、原因、运行摘要与命中清单） | 30 天 |

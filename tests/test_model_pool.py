@@ -114,6 +114,23 @@ class ContextWindowTest(unittest.TestCase):
         text = self.config_for({"id": "x", "model": "m", "base_url": "u", "context": 131072})
         self.assertIn("model_context_window = 131072", text)
 
+    def test_bridge_url_forces_responses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with mock.patch.object(supervisor.c, "ROOT", Path(directory)):
+                supervisor.write_codex_config(
+                    {
+                        "id": "x",
+                        "model": "m",
+                        "base_url": "https://upstream.example/v1",
+                        "wire_api": "chat",
+                    },
+                    "key",
+                    "http://127.0.0.1:1234/v1",
+                )
+                text = (Path(directory) / ".codex" / "config.toml").read_text(encoding="utf-8")
+        self.assertIn('base_url = "http://127.0.0.1:1234/v1"', text)
+        self.assertIn('wire_api = "responses"', text)
+
 
 if __name__ == "__main__":
     unittest.main()

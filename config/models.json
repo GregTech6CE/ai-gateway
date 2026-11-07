@@ -18,6 +18,7 @@
           "api_key_env": "MODEL_KEY_CLINEPASS",
           "model": "cline-pass/deepseek-v4.1-flash-1017",
           "wire_api": "chat",
+          "codex_bridge": true,
           "headers": {
             "X-Response-Format": "openai"
           },

@@ -67,16 +67,22 @@ used` 之类）属于展示层，不应当作结构化判断依据。
 
 ### wire_api 的兼容性
 
-`wire_api = "chat"` 自 `0.166` 起不再被接受，配置加载阶段即失败：
+`wire_api = "chat"` 自 `0.95.0` 起不再被接受（`0.94.0` 是最后一个支持版本），配置加载
+阶段即失败：
 
 ```
 Error loading config.toml: `wire_api = "chat"` is no longer supported.
-in `model_providers.<alias>.wire_api`
+How to fix: set `wire_api = "responses"` in your provider config.
+More info: https://github.com/openai/codex/discussions/7782
 ```
 
-这个失败发生在会话建立之前，事件流里没有任何输出，进程以 `1` 退出。使用 OpenAI 兼容的
-中转端点时，必须先确认该端点实现了 Responses 协议；只提供 chat/completions 的端点不能用
-当前版本驱动。
+这个失败发生在会话建立之前，事件流里没有任何输出，进程以 `1` 退出；未被选中的 provider
+条目也会触发。部分子命令（如 `codex features list`）还会附带
+`in model_providers.<alias>.wire_api`。使用 OpenAI 兼容的中转端点时，必须先确认该端点
+实现了 Responses 协议。
+
+只提供 `chat/completions` 的端点不能直接驱动当前版本；本仓库的转换方式见
+`docs/jobs/bug-issue-analysis.md` 的「执行流程」。
 
 ## 沙箱与工作目录
 
@@ -102,15 +108,16 @@ in `model_providers.<alias>.wire_api`
 | 启动即退出，无任何输出 | 配置键不再支持、provider 段缺字段 | stderr 的 `Error loading config.toml` |
 | `thread.started` 缺失 | 凭据无效、base_url 不可达 | `error` 事件或进程 stderr |
 | 有回合但迅速 `turn.failed` | 上游 4xx、模型名不存在 | `turn.failed.error` |
-| 长时间无输出 | 上游挂起 | 需外部墙钟；CLI 自身不设首字超时 |
+| 长时间无输出 | 上游挂起 | `stream_idle_timeout_ms`（默认 300000ms）之外仍需外部墙钟 |
 | 反复执行同一命令 | 模型陷入自检循环 | 事件流里的重复 `item`；需外部判环 |
 
-最后两行是外部责任：CLI 不提供停滞超时与循环检测，调用方要自己设墙钟并在重复调用时终止
-进程组。
+最后两行是外部责任：CLI 的 `stream_idle_timeout_ms` 只覆盖流空闲，不覆盖工具执行或无进展；
+循环检测仍需调用方自己设墙钟并在重复调用时终止进程组。
 
 ## 来源
 
 - `openai/codex` 源码：`codex-rs/cli/src/main.rs`（子命令）、`codex-rs/exec/src/cli.rs`
   （`exec` 参数）、`codex-rs/exec/src/exec_events.rs`（JSONL 事件）、
   `codex-rs/utils/cli/src/shared_options.rs`（共享参数）。
-- `wire_api="chat"` 的移除：上游 discussion 7782。
+- `wire_api="chat"` 的移除：上游 discussion 7782；最后支持版本 `0.94.0`，首个拒绝版本
+  `0.95.0`（PR #10157）。

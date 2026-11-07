@@ -52,5 +52,8 @@ job 内部步骤写在各 job 文档。其余文档只引用，不复述。
 2. 在 `roles.analysis` 增加绑定，给出 `context`、`effort` 与 `weight`；`weight` 决定相对
    调用频次（之比即长期选择次数之比），缺省为 1；待机时长按一个月封顶。
 3. 在 `llm` environment 补齐同名 secret；缺 key 时该 endpoint 被记为失败并跳过。
+4. 若 endpoint 只提供 `chat/completions`，加 `codex_bridge: true`；supervisor 会为它启动
+   `scripts/responses_bridge.py`，Codex 仍按 `wire_api="responses"` 连接本地桥，`headers`
+   由桥透传给上游。桥的字段覆盖范围见 `jobs/bug-issue-analysis.md` 的「执行流程」。
 
 两者的共同要求：不要为了接入方便放宽任何 fail-closed 分支，不要在配置里写凭据值。

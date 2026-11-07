@@ -7,9 +7,11 @@ import json
 import os
 import re
 import signal
+import socket
 import subprocess
 import sys
 import time
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -30,6 +32,7 @@ pool_cfg = budget.get("model_pool", {})
 OUTPUTS = c.ROOT / "outputs"
 OUTPUTS.mkdir(parents=True, exist_ok=True)
 LOG_PATH = OUTPUTS / "agent_output.log"
+BRIDGE_LOG = OUTPUTS / "bridge.log"
 ANSWER_MD = OUTPUTS / "answer.md"
 ANSWER_JSON = OUTPUTS / "answer.json"
 RESULT_PATH = OUTPUTS / "result.json"
@@ -43,6 +46,17 @@ DEFAULT_CONTEXT_WINDOW = 1_048_576
 # Codex 可执行文件；命令行固定为 `exec --dangerously-bypass-approvals-and-sandbox <prompt>`。
 # 用元组而不是字符串，避免路径含空格时的拆分问题，也便于测试整体替换成脚本。
 CODEX_BIN = (os.environ.get("CODEX_BIN") or "codex",)
+# 只提供 chat/completions 的 endpoint 由这个桥翻译成 Responses；见 responses_bridge.py。
+BRIDGE_SCRIPT = Path(__file__).with_name("responses_bridge.py")
+# 子进程不需要的 GitHub / 写回凭据；Codex 只保留 GH_RO 对应的 GH_TOKEN。
+TOKEN_ENVS = (
+    "GITHUB_TOKEN",
+    "SELF_TOKEN",
+    "GH_TOKEN",
+    "GH_RO_TOKEN",
+    "GH_RW_TOKEN",
+    "MODEL_HEALTH_TOKEN",
+)
 
 
 def one_line(value) -> str:
@@ -66,7 +80,11 @@ def format_event(event: str, fields: dict) -> str:
     if event == "codex_retry_skip":
         return f"Codex {fields.get('kind')} 跳过重试：attempt={fields.get('attempt')} entry={fields.get('entry')} wait={fields.get('wait_sec')}s remaining={fields.get('remaining_sec')}s"
     if event == "attempt_start":
-        return f"开始 Codex：attempt={fields.get('attempt')} model={fields.get('model')} context={fields.get('context')} effort={fields.get('effort')} wire_api={fields.get('wire_api')} timeout={fields.get('timeout_minutes')}min"
+        return f"开始 Codex：attempt={fields.get('attempt')} model={fields.get('model')} context={fields.get('context')} effort={fields.get('effort')} wire_api={fields.get('wire_api')} bridge={fields.get('bridge')} timeout={fields.get('timeout_minutes')}min"
+    if event == "bridge_start":
+        return f"协议桥已启动：entry={fields.get('entry')} port={fields.get('port')} upstream={fields.get('upstream')}"
+    if event == "bridge_error":
+        return f"协议桥启动失败：entry={fields.get('entry')} error={fields.get('error')}"
     if event == "codex_start":
         return f"Codex 已启动：attempt={fields.get('attempt')} pid={fields.get('pid')} prompt_chars={fields.get('prompt_chars')}"
     if event == "heartbeat":
@@ -166,10 +184,12 @@ def build_prompt() -> str:
     )
 
 
-def write_codex_config(entry: dict, key: str) -> dict[str, str]:
+def write_codex_config(entry: dict, key: str, bridge_base_url: str | None = None) -> dict[str, str]:
     alias = re.sub(r"[^A-Za-z0-9_]", "_", entry.get("provider_alias") or entry["id"])
     home = c.ROOT / ".codex"
     home.mkdir(exist_ok=True)
+    base_url = bridge_base_url or entry["base_url"]
+    wire_api = "responses" if bridge_base_url else entry.get("wire_api", "responses")
     config = "\n".join(
         [
             f'model = "{entry["model"]}"',
@@ -182,9 +202,9 @@ def write_codex_config(entry: dict, key: str) -> dict[str, str]:
             "",
             f"[model_providers.{alias}]",
             f'name = "{alias}"',
-            f'base_url = "{entry["base_url"]}"',
+            f'base_url = "{base_url}"',
             'env_key = "LLM_API_KEY"',
-            f'wire_api = "{entry.get("wire_api", "responses")}"',
+            f'wire_api = "{wire_api}"',
             "requires_openai_auth = false",
             "",
         ]
@@ -404,7 +424,7 @@ def classify_log(text: str) -> model_pool.ModelError | None:
 def archive_attempt(number: int) -> None:
     target = OUTPUTS / f"attempt-{number}"
     target.mkdir(parents=True, exist_ok=True)
-    for path in (ANSWER_MD, ANSWER_JSON, LOG_PATH):
+    for path in (ANSWER_MD, ANSWER_JSON, LOG_PATH, BRIDGE_LOG):
         if path.exists():
             path.replace(target / path.name)
 
@@ -427,12 +447,142 @@ def terminate_tree(proc: subprocess.Popen, hard: bool = False) -> None:
         pass
 
 
+class BridgeProcess:
+    """Responses→Chat 协议桥的句柄；run_codex 结束时必须 stop。"""
+
+    def __init__(self, process: subprocess.Popen, port: int):
+        self.process = process
+        self.port = port
+
+    @property
+    def base_url(self) -> str:
+        return f"http://127.0.0.1:{self.port}/v1"
+
+    def stop(self) -> None:
+        if self.process.poll() is not None:
+            return
+        self.process.terminate()
+        try:
+            self.process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+            try:
+                self.process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
+
+
+def start_bridge(entry: dict) -> BridgeProcess:
+    """启动本地协议桥，返回句柄；启动失败抛 RuntimeError。
+
+    端口由父进程先绑定一次 0 号端口取得，再交给子进程；CI runner 内不存在并发抢端口
+    的竞争者，这个先取后放的窗口足够小。健康检查通过才算就绪。
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = int(sock.getsockname()[1])
+
+    command = [
+        sys.executable,
+        "-I",
+        str(BRIDGE_SCRIPT),
+        "--port",
+        str(port),
+        "--upstream",
+        entry["base_url"],
+        "--model",
+        entry["model"],
+        "--api-key-env",
+        entry.get("api_key_env", ""),
+        "--timeout",
+        str(int(entry.get("bridge_timeout_seconds", 600))),
+    ]
+    for name, value in (entry.get("headers") or {}).items():
+        command.extend(["--header", f"{name}: {value}"])
+
+    log = open(BRIDGE_LOG, "a", encoding="utf-8", errors="replace")
+    bridge_env = os.environ.copy()
+    for name in TOKEN_ENVS:
+        bridge_env.pop(name, None)
+    keep_key = entry.get("api_key_env", "")
+    for name in list(bridge_env):
+        if name.startswith("MODEL_KEY_") and name != keep_key:
+            bridge_env.pop(name, None)
+    try:
+        process = subprocess.Popen(
+            command,
+            stdout=log,
+            stderr=subprocess.STDOUT,
+            env=bridge_env,
+            cwd=str(c.ROOT),
+            start_new_session=True,
+        )
+    finally:
+        log.close()
+
+    bridge = BridgeProcess(process, port)
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise RuntimeError(f"bridge exited with {process.returncode}")
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/health", timeout=1) as response:
+                if response.status == 200:
+                    return bridge
+        except Exception:
+            time.sleep(0.2)
+    bridge.stop()
+    raise RuntimeError("bridge did not become ready")
+
+
 def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
+    """启动协议桥（如需要），运行 body，最后保证桥被终止。"""
+    bridge: BridgeProcess | None = None
+    if entry.get("codex_bridge"):
+        try:
+            bridge = start_bridge(entry)
+        except Exception as exc:
+            log_event(
+                "bridge_error",
+                entry=entry["id"],
+                error=f"{type(exc).__name__}: {exc}"[:200],
+            )
+            return {
+                "status": "failed",
+                "reason": "bridge start failed",
+                "turns": 0,
+                "elapsed_sec": 0,
+                "tokens": 0,
+                "exit_code": -1,
+                "entry_id": entry["id"],
+                "answer_md_bytes": 0,
+                "answer_json": False,
+            }
+        log_event(
+            "bridge_start",
+            entry=entry["id"],
+            port=bridge.port,
+            upstream=entry["base_url"],
+        )
+    try:
+        return _run_codex_body(entry, key, deadline, attempt, bridge)
+    finally:
+        if bridge:
+            bridge.stop()
+
+
+def _run_codex_body(
+    entry: dict,
+    key: str,
+    deadline: float,
+    attempt: int,
+    bridge: BridgeProcess | None,
+) -> dict:
     prompt = build_prompt()
     (OUTPUTS / "prompt.txt").write_text(prompt, encoding="utf-8")
     env = os.environ.copy()
-    env.update(write_codex_config(entry, key))
-    for name in ("GITHUB_TOKEN", "SELF_TOKEN", "GH_TOKEN"):
+    env.update(write_codex_config(entry, key, bridge.base_url if bridge else None))
+    for name in TOKEN_ENVS:
         env.pop(name, None)
     env["GH_TOKEN"] = GH_RO
 
@@ -450,6 +600,7 @@ def run_codex(entry: dict, key: str, deadline: float, attempt: int) -> dict:
         context=entry.get("context"),
         effort=entry.get("effort"),
         wire_api=entry.get("wire_api"),
+        bridge=bool(entry.get("codex_bridge")),
         timeout_minutes=timeout_minutes,
         loop_threshold=threshold,
     )
