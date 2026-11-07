@@ -10,6 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as c  # noqa: E402
+import labels  # noqa: E402
 
 MAX_LENGTH = 60_000
 REQUIRED = (
@@ -27,12 +28,14 @@ REQUIRED = (
 )
 
 
-def validate(data) -> str | None:
+def validate(data, repo_cfg: dict | None = None) -> str | None:
     if not isinstance(data, dict):
         return "not an object"
     for key in REQUIRED:
         if key not in data:
             return f"missing {key}"
+    if not labels.is_valid_type(data.get("issue_type"), repo_cfg or {}):
+        return "bad issue_type"
     if data.get("confidence") not in ("high", "medium", "low"):
         return "bad confidence"
     if not isinstance(data.get("conclusion"), str) or len(data["conclusion"].strip()) < 10:
@@ -106,13 +109,12 @@ def render_answer(
     root = str(answer.get("root_cause") or "").strip()
     hint = str(answer.get("ai_fix_hint") or "").strip()
     versions = "、".join(inline(item) for item in answer.get("affected_versions") or []) or "未确定"
-    allowed = {str(item).lower() for item in (repo_cfg.get("triage") or {}).get("write_only", [])}
-    raw_labels = [
-        str(item)
-        for item in answer.get("labels") or []
-        if str(item).lower() in allowed and str(item).lower() != "needs triage"
-    ]
-    labels = ", ".join(inline(item) for item in raw_labels) or "无"
+    kept_labels, dropped_labels, issue_type = labels.sanitize(
+        answer.get("labels") or [], answer.get("issue_type"), repo_cfg
+    )
+    if dropped_labels:
+        print(f"labels dropped: {labels.format_dropped(dropped_labels)}", file=sys.stderr)
+    label_text = ", ".join(inline(item) for item in kept_labels) or "无"
     values = {
         "{{issue_number}}": issue,
         "{{issue_title}}": title,
@@ -120,9 +122,9 @@ def render_answer(
             "> **部分结论**：分析在时限内未完成，以下为已完成内容。\n\n" if partial else ""
         ),
         "{{issue_summary}}": bullets(answer.get("issue_summary")),
-        "{{issue_type}}": inline(answer.get("issue_type") or "unknown"),
+        "{{issue_type}}": inline(issue_type),
         "{{affected_versions}}": versions,
-        "{{labels}}": labels,
+        "{{labels}}": label_text,
         "{{evidence}}": evidence_block(answer.get("evidence")),
         "{{root_cause}}": root,
         "{{conclusion}}": str(answer.get("conclusion") or "").strip(),
@@ -193,11 +195,11 @@ def render_rejection(
     issue = str(issue_number or repo_cfg.get("_issue", ""))
     title = issue_title.strip() or "未提供标题"
     category = str(relevance.get("relevance") or "unknown")
-    labels = {
+    categories = {
         "spam": "垃圾信息、未知链接或广告",
         "out_of_scope": "与项目内容完全无关，或要求生成与项目完全无关的图片、视频、网页、三维模型",
     }
-    label = labels.get(category, category)
+    label = categories.get(category, category)
     reason = str(relevance.get("reason") or "未提供原因").strip()
     try:
         confidence = float(relevance.get("confidence", 0))
@@ -281,7 +283,7 @@ def main() -> None:
             data = json.loads(answer_path.read_text(encoding="utf-8"))
         except Exception:
             data = None
-        if data is not None and validate(data) is None:
+        if data is not None and validate(data, repo_cfg) is None:
             text = render_answer(
                 data,
                 repo_cfg,

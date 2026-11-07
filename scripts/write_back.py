@@ -11,6 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as c  # noqa: E402
+import labels  # noqa: E402
 import scan_out  # noqa: E402
 
 REPO = c.env("REPO")
@@ -36,11 +37,16 @@ def apply_triage(issue: dict) -> None:
         answer = json.loads(ANSWER.read_text(encoding="utf-8"))
     except Exception:
         return
+    if not labels.is_valid_type(answer.get("issue_type"), repo_cfg):
+        print("invalid issue_type; skip triage", file=sys.stderr)
+        return
     cfg = repo_cfg.get("triage", {})
-    allowed = {str(item).lower() for item in cfg.get("write_only", [])} - {"needs triage"}
-    raw = [str(item).strip() for item in answer.get("labels") or []]
-    labels = [item for item in dict.fromkeys(raw) if item.lower() in allowed]
-    if not labels:
+    kept, dropped, _ = labels.sanitize(
+        answer.get("labels") or [], answer.get("issue_type"), repo_cfg
+    )
+    if dropped:
+        print(f"labels dropped: {labels.format_dropped(dropped)}", file=sys.stderr)
+    if not kept:
         return
     current = {
         str(label.get("name", "")).lower(): str(label.get("name", ""))
@@ -57,7 +63,7 @@ def apply_triage(issue: dict) -> None:
         existing = {}
     to_add: list[str] = []
     resolved = False
-    for label in labels:
+    for label in kept:
         key = label.lower()
         if key in current or key in existing:
             resolved = True

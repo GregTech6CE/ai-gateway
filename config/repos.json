@@ -33,15 +33,90 @@
           ]
         ],
         "write_only": [
-          "bug",
           "crash",
+          "regression",
+          "perf",
           "parity",
           "translation",
+          "qol",
+          "balance",
+          "refactor",
+          "scope: recipe",
+          "scope: machine",
+          "scope: interaction",
+          "scope: ui",
+          "scope: logistics",
+          "scope: equipment",
+          "scope: worldgen",
+          "scope: material",
+          "scope: energy",
+          "scope: redstone",
+          "scope: hazard",
+          "scope: compat",
+          "scope: api",
+          "scope: build",
           "needs info",
+          "needs help",
+          "priority: low",
+          "priority: medium",
+          "priority: high",
           "1.20.1",
-          "1.21.1",
-          "needs triage"
+          "1.21.1"
         ],
+        "label_axes": {
+          "type": [
+            "bug",
+            "enhancement",
+            "rfc"
+          ],
+          "kind": [
+            "crash",
+            "regression",
+            "perf",
+            "parity",
+            "translation",
+            "qol",
+            "balance",
+            "refactor"
+          ],
+          "scope": [
+            "scope: recipe",
+            "scope: machine",
+            "scope: interaction",
+            "scope: ui",
+            "scope: logistics",
+            "scope: equipment",
+            "scope: worldgen",
+            "scope: material",
+            "scope: energy",
+            "scope: redstone",
+            "scope: hazard",
+            "scope: compat",
+            "scope: api",
+            "scope: build"
+          ],
+          "status": [
+            "needs info",
+            "needs help"
+          ],
+          "priority": [
+            "priority: low",
+            "priority: medium",
+            "priority: high"
+          ],
+          "version": [
+            "1.20.1",
+            "1.21.1"
+          ]
+        },
+        "label_limits": {
+          "type": 1,
+          "kind": 2,
+          "scope": 2,
+          "status": 1,
+          "priority": 1,
+          "version": 1
+        },
         "triage_labels": [
           "needs triage"
         ],

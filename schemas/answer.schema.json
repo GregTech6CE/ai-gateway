@@ -17,7 +17,7 @@
   ],
   "properties": {
     "issue_type": {
-      "enum": ["bug", "crash", "parity", "translation", "enhancement", "question", "unknown"]
+      "enum": ["bug", "enhancement", "rfc", "unknown"]
     },
     "issue_summary": {
       "type": "array",

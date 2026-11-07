@@ -17,6 +17,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import common as c  # noqa: E402
+import labels  # noqa: E402
 import model_pool  # noqa: E402
 import scan_out  # noqa: E402
 
@@ -145,6 +146,8 @@ def validate_answer() -> bool:
     if not isinstance(data, dict):
         return False
     if any(key not in data for key in REQUIRED):
+        return False
+    if not labels.is_valid_type(data.get("issue_type"), repo_cfg):
         return False
     if data.get("confidence") not in ("high", "medium", "low"):
         return False

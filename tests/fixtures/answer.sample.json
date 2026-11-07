@@ -1,8 +1,8 @@
 {
-  "issue_type": "crash",
+  "issue_type": "bug",
   "issue_summary": [
     "版本：`v1.0.5`（`1.21.1` NeoForge）",
-    "类型：崩溃 / Crash",
+    "问题形态：崩溃 / Crash",
     "现象：进入世界后立即崩溃"
   ],
   "conclusion": "配方注册阶段对空物品栈解引用，导致崩溃。",
@@ -31,7 +31,7 @@
   ],
   "ai_fix_hint": "最小上下文：RecipeMap 注册链路；验证：用同一崩溃报告重跑。",
   "affected_versions": ["1.21.1 NeoForge"],
-  "labels": ["crash", "1.21.1"],
+  "labels": ["crash", "scope: machine", "priority: high", "1.21.1"],
   "partial": false,
   "notes": ""
 }

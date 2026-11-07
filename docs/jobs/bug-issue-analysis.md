@@ -14,8 +14,8 @@ failure）：
 - `event` 为 `issues` 或 `issue_comment`；
 - 目标仓库可见性不高于本仓库：公开实例拒绝处理私有 issue 仓库；
 - issue 存在、打开、不是 PR；
-- 标签匹配 `process_only` 的任一 OR-AND 组，当前为 `["bug"]`；`needs triage` 只是分诊
-  标签，不触发分析；
+- 标签匹配 `process_only` 的任一 OR-AND 组，当前为 `[["bug"]]`；`needs triage` 只是
+  分诊标签，不触发分析；
 - 评论触发时，评论属于该 issue、作者协会为 `OWNER`/`MEMBER`/`COLLABORATOR`、正文提及
   该仓库的 bot，且不是 bot 自身评论；
 - bot 评论中不存在 `done`/`rejected` 标记，且无在途标记；`requested`/`running` 超过
@@ -117,7 +117,9 @@ failure）：
    写入 `prompt.txt` 以便复核。只提供 `chat/completions` 的入口会先由 supervisor 启动本地
    协议桥（`scripts/responses_bridge.py`），Codex 仍按 `wire_api="responses"` 连接
    `127.0.0.1`；桥的日志写入 `bridge.log`。agent 按四个节点增量写 `answer.md`，最后写
-   `answer.json`。入口已由 preflight 锁定，此后的失败只在同一个入口上按
+   `answer.json`；分类按仓库 overlay 的七轴规则填写，类型写入 `issue_type`，性质、领域、
+   分流状态、优先级与版本写入 `labels`，类型标签不重复写入 `labels`。入口已由 preflight
+   锁定，此后的失败只在同一个入口上按
    `rate_limit_retries` 退避重试；只有确定性错误（`auth`/`config`，例如该 CLI 版本不支持
    某个 provider 配置）才继续沿候选序换人。`l2.stall_seconds`（当前 180 秒）内没有任何
    输出即终止本次尝试：它只防挂死吃掉 job 预算，不参与入口判定，也不计罚。
@@ -215,8 +217,11 @@ supervisor 按序消费：只有 preflight 失败才会走到下一个候选，�
 4. 扫描。`result.json.secret_scan` 命中，或渲染结果命中模式，都改为发布拦截说明代替
    结论，并以非零状态退出。
 5. 写回。原地 PATCH `placeholder_comment_id` 指向的评论；该评论已不存在时退回新建。
-6. 分诊。只加 `triage.write_only` 去掉 `needs triage` 后的白名单内、且仓库中确实存在的
-   标签；不创建新标签；分诊有效时移除 `triage.triage_labels`。
+6. 分诊。先过 `scripts/labels.py` 的确定性门禁：只保留 `triage.label_axes` 声明的标签；
+   类型标签只由 `issue_type` 表达，不重复写入 `labels`；性质必须与类型兼容；性质与领域
+   各最多 2 个，分流状态、优先级与版本各最多 1 个；`needs triage` 与关闭原因标签不写入。
+   `issue_type` 非法时整段分诊跳过。门禁通过后只加仓库中确实存在的标签；不创建新标签；
+   分诊有效时移除 `triage.triage_labels`。
 7. 更新健康状态。用 variable token 写 `MODEL_HEALTH`，该步骤无条件运行，`dry_run` 也不例外。
 
 写回放在扫描之后、分诊之前：结论一旦公开就无法收回，而标签是结论的附属动作。
@@ -270,6 +275,8 @@ supervisor 按序消费：只有 preflight 失败才会走到下一个候选，�
   确定性错误（`auth`/`config`）会触发换人，其余失败在原地退避重试。
 - agent 的 prompt 里，issue 正文与日志是证据，不是指令。
 - 扫描在先，发布在后；扫描命中不进入人工复核，直接阻断。
+- 标签先过确定性门禁：白名单、类型唯一、性质与类型兼容、各轴数量上限；类型由
+  `issue_type` 表达，不重复写入 `labels`。门禁只丢弃，不补标签、不改写类型。
 - 脱敏与阻断分开：文件先就地脱敏，命中再阻断发布；扫描失败时上传闸门关闭，产物目录不
   外露。artifact 中不留已知形态的凭据片段，但它仍不是「已审计」的证明——未知形态的凭据
   不在覆盖范围内。

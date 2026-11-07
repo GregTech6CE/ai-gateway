@@ -22,15 +22,16 @@
 
 ## 分析步骤
 
-1. 读取 `inputs/snapshot.json`，提取：类型、版本、加载器/运行环境、问题描述、
+1. 读取 `inputs/snapshot.json`，提取：问题形态、版本、加载器/运行环境、问题描述、
    复现步骤、附件清单。
 2. 若 `inputs/logs/` 存在，优先查看崩溃报告、`latest.log`/`debug.log`、JVM
    `hs_err_pid*` 与日志头部的版本/模组信息。
 3. 在 `code/current/` 中验证堆栈帧与代码路径。具体目录布局、版本映射和文件约定由
    仓库 overlay 提供；只引用真实存在的文件与行号，格式 `path:line`。
-4. 区分问题类型：崩溃、行为缺陷、原版差异、翻译、功能建议、使用问题等；按仓库
-   overlay 的类型约定组织结论。
-5. 如果 issue 是 bug/crash 但完全没有日志，明确写“缺少日志，无法定位”，不要编造根因。
+4. 按仓库 overlay 的分类轴判断 `issue_type` 与 `labels`：类型只写在 `issue_type`，
+   性质、领域、分流状态、优先级与版本写在 `labels`；类型标签不要重复放进 `labels`。
+5. 如果 issue 是 `bug` 或带 `crash` 但完全没有日志，明确写“缺少日志，无法定位”，不要
+   编造根因。
 
 ## Markdown 格式
 
@@ -43,7 +44,7 @@
 - 普通自然语言不要包 code；不要把整句或整段包成 code。
 - `ai_fix_hint` 是纯文本：不要使用行内 code、标题或列表；渲染器会把它放进 `text`
   代码块。
-- `labels` / `affected_versions` 数组只放裸值，不加反引号；渲染器负责展示。
+- `issue_type` / `labels` / `affected_versions` 只放裸值，不加反引号；渲染器负责展示。
 
 ## 输出
 
@@ -58,7 +59,7 @@
   "issue_type": "bug",
   "issue_summary": [
     "版本：...",
-    "类型：...",
+    "问题形态：...",
     "现象：...",
     "附件：..."
   ],
@@ -80,13 +81,16 @@
   ],
   "ai_fix_hint": "如果要把问题交给修复 AI，给出最小上下文与验证步骤。",
   "affected_versions": ["..."],
-  "labels": [],
+  "labels": ["crash", "scope: machine", "priority: high", "1.21.1"],
   "partial": false,
   "notes": ""
 }
 ```
 
-- `labels` 只能来自仓库 overlay 或仓库配置给出的集合；不要创建新标签。
+- `issue_type` 只能是 `bug`、`enhancement`、`rfc`、`unknown`；类型标签不要重复写进
+  `labels`。
+- `labels` 只能来自仓库 overlay 或仓库配置给出的集合；不要创建新标签。性质与类型必须
+  兼容，性质最多 2 个、领域最多 2 个，分流状态、优先级与版本各最多 1 个。
 - 结论用中文；代码标识符与日志原文保持原样，并按上面的 Markdown 规则使用行内 code。
 - 证据最多 40 条，每条都要能被维护者复核。
 - `issue_summary` 用 3–6 条事实；`user_advice` 用 2–4 条用户可执行动作。

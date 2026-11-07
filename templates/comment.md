@@ -4,7 +4,7 @@
 
 {{issue_summary}}
 
-- 类型：{{issue_type}}
+- 分类：{{issue_type}}
 - 影响版本：{{affected_versions}}
 - 建议标签：{{labels}}
 

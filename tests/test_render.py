@@ -10,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
 
+import common  # noqa: E402
 import model_pool  # noqa: E402
 import render  # noqa: E402
 import scan_out  # noqa: E402
@@ -35,7 +36,8 @@ class RenderTest(unittest.TestCase):
 
     def test_answer_renders_structured_sections(self):
         answer = json.loads((ROOT / "tests/fixtures/answer.sample.json").read_text(encoding="utf-8"))
-        repo_cfg = {"_repo": "GregTech6CE/GregTech6", "_issue": "1"}
+        repo_cfg = common.load_repo("GregTech6CE/GregTech6")
+        repo_cfg["_issue"] = "1"
         text = render.render_answer(
             answer,
             repo_cfg,
@@ -60,8 +62,10 @@ class RenderTest(unittest.TestCase):
         self.assertIn("`core/src/main/java/gregtech/api/recipe/RecipeMap.java:120-138`", text)
         self.assertIn("`ItemStack`", text)
         self.assertIn("`crash`", text)
+        self.assertIn("`scope: machine`", text)
+        self.assertIn("`priority: high`", text)
         self.assertIn("`1.21.1`", text)
-        self.assertIn("- 类型：`crash`", text)
+        self.assertIn("- 分类：`bug`", text)
         self.assertIn("最小上下文：RecipeMap 注册链路", text)
         self.assertIn("lily:done", text)
         self.assertNotIn("lily:partial", text)
@@ -102,6 +106,33 @@ class RenderTest(unittest.TestCase):
         )
         self.assertIn("建议标签：`crash`", text)
         self.assertNotIn("wontfix", text)
+
+    def test_type_label_in_labels_is_not_repeated(self):
+        answer = json.loads((ROOT / "tests/fixtures/answer.sample.json").read_text(encoding="utf-8"))
+        answer["labels"] = ["bug", "crash", "1.21.1"]
+        repo_cfg = {
+            "_repo": "GregTech6CE/GregTech6",
+            "_issue": "1",
+            "triage": {
+                "label_axes": {
+                    "type": ["bug", "enhancement", "rfc"],
+                    "kind": ["crash"],
+                    "version": ["1.21.1"],
+                },
+                "label_limits": {"type": 1, "kind": 2, "version": 1},
+            },
+        }
+        text = render.render_answer(
+            answer, repo_cfg, "", "abc", partial=False, issue_title="t", issue_number="1"
+        )
+        self.assertIn("- 分类：`bug`", text)
+        self.assertIn("建议标签：`crash`, `1.21.1`", text)
+        self.assertNotIn("建议标签：`bug`", text)
+
+    def test_validate_rejects_old_issue_type(self):
+        answer = json.loads((ROOT / "tests/fixtures/answer.sample.json").read_text(encoding="utf-8"))
+        answer["issue_type"] = "crash"
+        self.assertEqual(render.validate(answer), "bad issue_type")
 
     def test_failure_comment_includes_reason_and_link(self):
         repo_cfg = {"_repo": "GregTech6CE/GregTech6", "_issue": "1"}

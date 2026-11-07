@@ -7,7 +7,9 @@
 2. 根因判断完成：写入「## 根因」段落，说明机制而不是只给结论。
 3. 修复方案完成：写入「## 修复方案」段落，给出最小改动与影响面。
 4. 最终结论完成：写入「## 结论」「## 置信度」「## 建议标签」段落，并同时写入
-   `outputs/answer.json`（严格符合 `schemas/answer.schema.json`）。
+   `outputs/answer.json`（严格符合 `schemas/answer.schema.json`）。分类按仓库 overlay
+   的轴规则填写：类型写在 `issue_type`，其余轴写在 `labels`，类型标签不要重复放进
+   `labels`。
 
 补充规则：
 

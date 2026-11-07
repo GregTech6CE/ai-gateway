@@ -30,8 +30,42 @@
           ]
         ],
         "write_only": [
-          "bug"
+          "crash",
+          "scope: core",
+          "needs info",
+          "priority: high",
+          "1.21.1"
         ],
+        "label_axes": {
+          "type": [
+            "bug",
+            "enhancement"
+          ],
+          "kind": [
+            "crash"
+          ],
+          "scope": [
+            "scope: core"
+          ],
+          "status": [
+            "needs info"
+          ],
+          "priority": [
+            "priority: high",
+            "priority: low"
+          ],
+          "version": [
+            "1.21.1"
+          ]
+        },
+        "label_limits": {
+          "type": 1,
+          "kind": 2,
+          "scope": 2,
+          "status": 1,
+          "priority": 1,
+          "version": 1
+        },
         "triage_labels": [
           "needs triage"
         ],
