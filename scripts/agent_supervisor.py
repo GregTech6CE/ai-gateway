@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
@@ -243,21 +244,54 @@ def count_turns(text: str) -> int:
     return sum(1 for line in text.splitlines() if line.strip() == "codex")
 
 
-def last_exec_command(text: str) -> tuple[str, str]:
-    """返回 ``(command, cwd)``；Codex 的人类可读输出把工作目录附在命令后面。"""
+def exec_blocks(text: str) -> list[tuple[str, str, str]]:
+    """解析全部 BASH 调用，返回 ``(command, cwd, output)``。
+
+    Codex 的人类可读输出格式是 ``exec`` 后跟 ``command in cwd``；只认带 `` in `` 的
+    行，避免把 assistant 文本里单独出现的 ``exec`` 当成命令。一次轮询可能跨过多个调用，
+    因此必须按顺序全部返回，不能只看最后一个。
+    """
     lines = text.splitlines()
-    for index in range(len(lines) - 1, 0, -1):
-        if lines[index - 1].strip() == "exec":
-            line = lines[index].strip()
-            command, separator, cwd = line.rpartition(" in ")
-            if separator and cwd:
-                return command.strip(), cwd.strip()
-            return line, ""
-    return "", ""
+    boundaries = ("exec", "codex", "apply patch", "tokens used")
+    blocks: list[tuple[str, str, str]] = []
+    index = 0
+    while index < len(lines) - 1:
+        if lines[index].strip() != "exec":
+            index += 1
+            continue
+        line = lines[index + 1].strip()
+        command, separator, cwd = line.rpartition(" in ")
+        if not separator or not cwd:
+            index += 1
+            continue
+        output: list[str] = []
+        cursor = index + 2
+        while cursor < len(lines) and lines[cursor].strip() not in boundaries:
+            output.append(lines[cursor])
+            cursor += 1
+        blocks.append((command.strip(), cwd.strip(), "\n".join(output).strip()))
+        index = cursor
+    return blocks
+
+
+def last_exec_command(text: str) -> tuple[str, str]:
+    blocks = exec_blocks(text)
+    return (blocks[-1][0], blocks[-1][1]) if blocks else ("", "")
 
 
 def count_exec(text: str) -> int:
-    return sum(1 for line in text.splitlines() if line.strip() == "exec")
+    return len(exec_blocks(text))
+
+
+def answer_progress() -> tuple[int, int]:
+    """用大小与 mtime 判断 ``answer.md`` 是否真的写过；只看大小会漏掉等长改写。"""
+    if not ANSWER_MD.exists():
+        return (0, 0)
+    try:
+        stat = ANSWER_MD.stat()
+    except OSError:
+        return (0, 0)
+    return (stat.st_size, stat.st_mtime_ns)
 
 
 def assistant_blocks(text: str, include_last: bool = False) -> list[str]:
@@ -637,7 +671,8 @@ def _run_codex_body(
         last_heartbeat = 0.0
         seen_exec = 0
         last_started_command = ""
-        last_answer_size = -1
+        last_signature = ("", "")
+        last_progress = (-1, -1)
         repeats = 0
         seen_assistant = 0
         last_growth_at = started
@@ -663,7 +698,8 @@ def _run_codex_body(
                 if time.monotonic() - last_check >= 5:
                     text = read_log()
                     turns = count_turns(text)
-                    execs = count_exec(text)
+                    calls = exec_blocks(text)
+                    execs = len(calls)
                     blocks = assistant_blocks(text)
                     for block in blocks[seen_assistant:]:
                         emit_assistant(block)
@@ -676,16 +712,20 @@ def _run_codex_body(
                     if log_size != last_log_size:
                         last_log_size = log_size
                         last_growth_at = time.monotonic()
-                    answer_size = ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0
-                    if execs > seen_exec:
-                        command, cwd = last_exec_command(text)
-                        if command and command == last_started_command and answer_size == last_answer_size:
+                    progress = answer_progress()
+                    answer_size = progress[0]
+                    for command, cwd, output in calls[seen_exec:]:
+                        signature = (
+                            command,
+                            hashlib.sha256(output.encode("utf-8")).hexdigest(),
+                        )
+                        if command and signature == last_signature and progress == last_progress:
                             repeats += 1
                         else:
                             repeats = 0
                         last_started_command = command
-                        last_answer_size = answer_size
-                        seen_exec = execs
+                        last_signature = signature
+                        last_progress = progress
                         log_event(
                             "exec",
                             attempt=attempt,
@@ -695,6 +735,7 @@ def _run_codex_body(
                             cwd=cwd,
                             command=command[:240],
                         )
+                    seen_exec = execs
                     if threshold and repeats >= threshold:
                         reason = f"loop detected ({threshold}x same command without progress)"
                         log_event(

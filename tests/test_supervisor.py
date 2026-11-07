@@ -99,8 +99,23 @@ class LogFormatTest(unittest.TestCase):
             ("ls -la", "/workspace/code/current"),
         )
 
-    def test_last_exec_command_without_cwd(self):
-        self.assertEqual(supervisor.last_exec_command("exec\nls\n"), ("ls", ""))
+    def test_last_exec_command_requires_cwd(self):
+        self.assertEqual(supervisor.last_exec_command("exec\nls\n"), ("", ""))
+
+    def test_exec_blocks_parse_multiple_in_order(self):
+        text = (
+            "exec\npython a.py in /workspace\nA\n\n"
+            "exec\necho b in /workspace\nB\n"
+        )
+        blocks = supervisor.exec_blocks(text)
+        self.assertEqual(
+            [(command, cwd) for command, cwd, _ in blocks],
+            [("python a.py", "/workspace"), ("echo b", "/workspace")],
+        )
+
+    def test_exec_blocks_ignore_assistant_exec_text(self):
+        text = "codex\nI will exec\nexec\nnot a command\ncodex\n"
+        self.assertEqual(supervisor.exec_blocks(text), [])
 
 
 class SecretScanTest(unittest.TestCase):
@@ -389,6 +404,61 @@ class RunCodexTest(unittest.TestCase):
         log = supervisor.SUPERVISOR_LOG.read_text(encoding="utf-8")
         self.assertIn("[BASH] /workspace/code/current $ echo hi", log)
         self.assertNotIn("[TOOL]", log)
+
+    def test_all_exec_blocks_in_one_poll_are_logged(self):
+        self.fake_codex(
+            'import time\n'
+            'print("codex", flush=True)\n'
+            'print("exec", flush=True)\n'
+            'print("python probe.py in /workspace/code/current", flush=True)\n'
+            'print("PROBE_OK", flush=True)\n'
+            'print("exec", flush=True)\n'
+            'print("echo done in /workspace/code/current", flush=True)\n'
+            'print("done", flush=True)\n'
+            'time.sleep(3)\n'
+        )
+        with mock.patch.dict(
+            supervisor.budget["l2"], {"stall_seconds": 5, "timeout_minutes": 1}
+        ):
+            self.run_once()
+        log = supervisor.SUPERVISOR_LOG.read_text(encoding="utf-8")
+        first = log.index("[BASH] /workspace/code/current $ python probe.py")
+        second = log.index("[BASH] /workspace/code/current $ echo done")
+        self.assertLess(first, second)
+
+    def test_same_command_with_changing_output_is_not_a_loop(self):
+        self.fake_codex(
+            'import time\n'
+            'print("codex", flush=True)\n'
+            'for index in range(4):\n'
+            '    print("exec", flush=True)\n'
+            '    print("python probe.py in /workspace/code/current", flush=True)\n'
+            '    print(f"PROBE_{index}", flush=True)\n'
+            'time.sleep(3)\n'
+        )
+        with mock.patch.dict(
+            supervisor.budget["l2"],
+            {"stall_seconds": 5, "timeout_minutes": 1, "loop_repeat_threshold": 3},
+        ):
+            result = self.run_once()
+        self.assertNotIn("loop detected", result["reason"])
+
+    def test_same_command_without_progress_triggers_loop(self):
+        self.fake_codex(
+            'import time\n'
+            'print("codex", flush=True)\n'
+            'for _ in range(4):\n'
+            '    print("exec", flush=True)\n'
+            '    print("python probe.py in /workspace/code/current", flush=True)\n'
+            '    print("PROBE_OK", flush=True)\n'
+            'time.sleep(3)\n'
+        )
+        with mock.patch.dict(
+            supervisor.budget["l2"],
+            {"stall_seconds": 5, "timeout_minutes": 1, "loop_repeat_threshold": 3},
+        ):
+            result = self.run_once()
+        self.assertIn("loop detected", result["reason"])
 
 
 class PreflightTest(unittest.TestCase):
