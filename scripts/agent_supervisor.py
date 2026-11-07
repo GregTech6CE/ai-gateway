@@ -66,7 +66,9 @@ def one_line(value) -> str:
 
 def format_event(event: str, fields: dict) -> str:
     if event == "exec":
-        return one_line(fields.get("command", ""))
+        cwd = one_line(fields.get("cwd", ""))
+        command = one_line(fields.get("command", ""))
+        return f"{cwd} $ {command}" if cwd else f"$ {command}"
     if event == "supervisor_start":
         return f"开始 supervisor：repo={fields.get('repo')} issue={fields.get('issue')} bot_enabled={fields.get('bot_enabled')} repo_enabled={fields.get('repo_enabled')}"
     if event == "analysis_entries":
@@ -89,7 +91,7 @@ def format_event(event: str, fields: dict) -> str:
     if event == "codex_start":
         return f"Codex 已启动：attempt={fields.get('attempt')} pid={fields.get('pid')} prompt_chars={fields.get('prompt_chars')}"
     if event == "heartbeat":
-        return f"heartbeat：attempt={fields.get('attempt')} elapsed={fields.get('elapsed_sec')}s turns={fields.get('turns')} exec={fields.get('exec_count')} answer_md={fields.get('answer_md_bytes')}B answer_json={fields.get('answer_json')} repeats={fields.get('repeats')}"
+        return f"attempt={fields.get('attempt')} elapsed={fields.get('elapsed_sec')}s turns={fields.get('turns')} exec={fields.get('exec_count')} answer_md={fields.get('answer_md_bytes')}B answer_json={fields.get('answer_json')} repeats={fields.get('repeats')}"
     if event == "loop_detected":
         return f"停止：检测到重复命令，attempt={fields.get('attempt')} repeats={fields.get('repeats')} command={fields.get('command')}"
     if event == "timeout":
@@ -127,7 +129,15 @@ def scrub(text: str) -> str:
 
 
 def log_event(event: str, message: str | None = None, **fields) -> None:
-    kind = "MSG" if event == "assistant" else "TOOL" if event == "exec" else "SYSTEM"
+    kind = (
+        "MSG"
+        if event == "assistant"
+        else "BASH"
+        if event == "exec"
+        else "HEARTBEAT"
+        if event == "heartbeat"
+        else "SYSTEM"
+    )
     if message is None:
         message = format_event(event, fields)
     line = f"[{datetime.now(CST).strftime('%Y-%m-%d %H:%M:%S')}] [{kind}] {scrub(one_line(message))}"
@@ -233,12 +243,17 @@ def count_turns(text: str) -> int:
     return sum(1 for line in text.splitlines() if line.strip() == "codex")
 
 
-def last_exec_command(text: str) -> str:
+def last_exec_command(text: str) -> tuple[str, str]:
+    """返回 ``(command, cwd)``；Codex 的人类可读输出把工作目录附在命令后面。"""
     lines = text.splitlines()
     for index in range(len(lines) - 1, 0, -1):
         if lines[index - 1].strip() == "exec":
-            return lines[index].strip()
-    return ""
+            line = lines[index].strip()
+            command, separator, cwd = line.rpartition(" in ")
+            if separator and cwd:
+                return command.strip(), cwd.strip()
+            return line, ""
+    return "", ""
 
 
 def count_exec(text: str) -> int:
@@ -663,7 +678,7 @@ def _run_codex_body(
                         last_growth_at = time.monotonic()
                     answer_size = ANSWER_MD.stat().st_size if ANSWER_MD.exists() else 0
                     if execs > seen_exec:
-                        command = last_exec_command(text)
+                        command, cwd = last_exec_command(text)
                         if command and command == last_started_command and answer_size == last_answer_size:
                             repeats += 1
                         else:
@@ -677,6 +692,7 @@ def _run_codex_body(
                             exec_count=execs,
                             repeats=repeats,
                             answer_md_bytes=answer_size,
+                            cwd=cwd,
                             command=command[:240],
                         )
                     if threshold and repeats >= threshold:

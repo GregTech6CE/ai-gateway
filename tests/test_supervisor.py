@@ -59,6 +59,50 @@ class SupervisorRetryTest(unittest.TestCase):
         self.assertEqual(supervisor.failure_reason(error, 0), "rate 429")
 
 
+class LogFormatTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.log = Path(self.tmp.name) / "supervisor.log"
+        self.saved = supervisor.SUPERVISOR_LOG
+        supervisor.SUPERVISOR_LOG = self.log
+
+    def tearDown(self):
+        supervisor.SUPERVISOR_LOG = self.saved
+        self.tmp.cleanup()
+
+    def test_exec_log_uses_bash_tag_and_cwd(self):
+        supervisor.log_event("exec", cwd="/workspace/code/current", command="ls -la")
+        line = self.log.read_text(encoding="utf-8").strip()
+        self.assertIn("[BASH] /workspace/code/current $ ls -la", line)
+        self.assertNotIn("[TOOL]", line)
+
+    def test_heartbeat_log_uses_heartbeat_tag(self):
+        supervisor.log_event(
+            "heartbeat",
+            attempt=1,
+            elapsed_sec=30,
+            turns=2,
+            exec_count=1,
+            answer_md_bytes=10,
+            answer_json=False,
+            repeats=0,
+        )
+        line = self.log.read_text(encoding="utf-8").strip()
+        self.assertIn("[HEARTBEAT] attempt=1", line)
+        self.assertNotIn("[SYSTEM]", line)
+        self.assertNotIn("heartbeat：", line)
+
+    def test_last_exec_command_parses_cwd(self):
+        text = "codex\nreading\n\nexec\nls -la in /workspace/code/current\n"
+        self.assertEqual(
+            supervisor.last_exec_command(text),
+            ("ls -la", "/workspace/code/current"),
+        )
+
+    def test_last_exec_command_without_cwd(self):
+        self.assertEqual(supervisor.last_exec_command("exec\nls\n"), ("ls", ""))
+
+
 class SecretScanTest(unittest.TestCase):
     PATCHED = (
         "OUTPUTS",
@@ -328,6 +372,23 @@ class RunCodexTest(unittest.TestCase):
         self.fake_codex('print("codex")\nprint("reading the log")\nprint("exec")\nprint("ls")\n')
         result = self.run_once()
         self.assertEqual(result["turns"], 1)
+
+    def test_exec_log_uses_bash_format(self):
+        self.fake_codex(
+            'import time\n'
+            'print("codex", flush=True)\n'
+            'print("reading the log", flush=True)\n'
+            'print("exec", flush=True)\n'
+            'print("echo hi in /workspace/code/current", flush=True)\n'
+            'time.sleep(3)\n'
+        )
+        with mock.patch.dict(
+            supervisor.budget["l2"], {"stall_seconds": 5, "timeout_minutes": 1}
+        ):
+            self.run_once()
+        log = supervisor.SUPERVISOR_LOG.read_text(encoding="utf-8")
+        self.assertIn("[BASH] /workspace/code/current $ echo hi", log)
+        self.assertNotIn("[TOOL]", log)
 
 
 class PreflightTest(unittest.TestCase):
