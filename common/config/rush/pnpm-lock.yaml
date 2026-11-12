@@ -11,11 +11,10 @@ importers:
   .: {}
 
   ../../apps/ci:
-    dependencies:
+    devDependencies:
       '@gt6ce/core':
         specifier: workspace:*
         version: link:../../packages/core
-    devDependencies:
       tsdown:
         specifier: 0.23.7
         version: 0.23.7(typescript@5.9.3)
@@ -24,11 +23,10 @@ importers:
         version: 5.9.3
 
   ../../apps/qqbot:
-    dependencies:
+    devDependencies:
       '@gt6ce/core':
         specifier: workspace:*
         version: link:../../packages/core
-    devDependencies:
       tsdown:
         specifier: 0.23.7
         version: 0.23.7(typescript@5.9.3)

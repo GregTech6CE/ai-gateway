@@ -1,0 +1,15 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/rush/v5/command-line.schema.json",
+  "commands": [
+    {
+      "commandKind": "bulk",
+      "name": "pack",
+      "summary": "把已构建的产物打成 tgz，放到 common/temp/artifacts",
+      "description": "每个应用包各自 npm pack。没有 pack 脚本的项目（如 @gt6ce/core，产物已内联进应用）会被跳过。",
+      "enableParallelism": false,
+      "ignoreMissingScript": true,
+      "incremental": false
+    }
+  ],
+  "parameters": []
+}

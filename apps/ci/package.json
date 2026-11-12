@@ -3,17 +3,19 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "description": "GitHub Actions 适配层：gate / prefetch / supervisor / render / write-back / control / update-health。",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "files": [
+    "dist"
+  ],
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@gt6ce/core": "workspace:*"
+    "typecheck": "tsc --noEmit",
+    "pack": "node ../../common/scripts/install-run-rush-pnpm.js pack --pack-destination ../../common/temp/artifacts"
   },
   "devDependencies": {
+    "@gt6ce/core": "workspace:*",
     "tsdown": "0.23.7",
     "typescript": "~5.9.3"
   },
