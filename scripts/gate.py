@@ -154,7 +154,7 @@ def main() -> None:
     markers = []
     for item in comments:
         if c.bot_login_matches(item.get("user") or {}, repo_cfg):
-            for parsed in c.parse_markers(item.get("body") or ""):
+            for parsed in c.parse_markers(item.get("body") or "", repo=REPO, issue=ISSUE):
                 markers.append((parsed, item))
     if any(parsed["kind"] == "done" and not is_current(parsed) for parsed, _ in markers):
         finish("skip", "already done")
@@ -163,9 +163,9 @@ def main() -> None:
     for parsed, item in markers:
         if is_current(parsed):
             continue
-        if parsed["kind"] in ("requested", "running"):
+        if parsed["kind"] == "requested":
             age = now - parse_time(item["created_at"])
-            if age < timedelta(minutes=budget["running_stale_minutes"]):
+            if age < timedelta(minutes=budget["requested_stale_minutes"]):
                 finish("skip", "request already in flight")
 
     since_1h = (now - timedelta(hours=1)).isoformat()
@@ -179,8 +179,8 @@ def main() -> None:
         if not str(item.get("issue_url", "")).endswith(f"/issues/{ISSUE}"):
             continue
         if any(
-            p["kind"] in ("requested", "running") and not is_current(p)
-            for p in c.parse_markers(item.get("body") or "")
+            p["kind"] == "requested" and not is_current(p)
+            for p in c.parse_markers(item.get("body") or "", repo=REPO, issue=ISSUE)
         ):
             same_issue += 1
     if same_issue >= budget["per_issue_per_hour"]:
@@ -196,7 +196,8 @@ def main() -> None:
         if c.bot_login_matches(item.get("user") or {}, repo_cfg)
         and any(
             p["kind"] == "requested" and not is_current(p)
-            for p in c.parse_markers(item.get("body") or "")
+            # 这里统计的是整个仓库，不能按 issue 过滤；只校验 repo 归属。
+            for p in c.parse_markers(item.get("body") or "", repo=REPO)
         )
     )
     if repo_count >= budget["per_repo_per_day"]:

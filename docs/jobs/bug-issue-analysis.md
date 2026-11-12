@@ -18,11 +18,11 @@ failure）：
   分诊标签，不触发分析；
 - 评论触发时，评论属于该 issue、作者协会为 `OWNER`/`MEMBER`/`COLLABORATOR`、正文提及
   该仓库的 bot，且不是 bot 自身评论；
-- bot 评论中不存在 `done`/`rejected` 标记，且无在途标记；`requested`/`running` 超过
-  `running_stale_minutes` 视为过期；
-- 三级配额未耗尽：每 issue 每小时 1 次（统计最近 1 小时内该 issue 上带 `requested` 或
-  `running` 的 bot 评论）、每仓库每天 30 次与全局每天 50 次（最近 24 小时，前者统计带
-  `requested` 的 bot 评论，后者统计本仓库 orchestrator 的 run 总数）。与当前 `request_id`
+- bot 评论中不存在 `done`/`rejected` 标记，且无在途标记；`requested` 超过
+  `requested_stale_minutes` 视为过期；
+- 三级配额未耗尽：每 issue 每小时 1 次（统计最近 1 小时内该 issue 上带 `requested` 的
+  bot 评论）、每仓库每天 30 次与全局每天 50 次（最近 24 小时，前者统计带 `requested` 的
+  bot 评论，后者统计本仓库 orchestrator 的 run 总数）。与当前 `request_id`
   相同的标记不计入。
 
 ### 权限边界

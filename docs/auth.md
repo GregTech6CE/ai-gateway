@@ -25,7 +25,7 @@
 标记只从 bot 身份发布的评论中解析；普通评论里出现同样的 HTML 注释不参与判定。
 
 标记的判定口径不对称：`done`/`rejected` 一经出现即永久阻止同一 issue 的再次分析，不设
-过期；只有 `requested`/`running` 按 `running_stale_minutes` 判定是否仍在途。要重新分析
+过期；只有 `requested` 按 `requested_stale_minutes` 判定是否仍在途。要重新分析
 一个已得出结论的 issue，需要移除对应标记，或换一个 issue。
 
 每仓库的 bot 身份由 `config/repos.json` 的 `bot_login`/`bot_mention` 决定，不依赖单一
