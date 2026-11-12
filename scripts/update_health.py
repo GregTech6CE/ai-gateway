@@ -40,7 +40,8 @@ def main() -> None:
     try:
         c.request("PATCH", f"/repos/{repo}/actions/variables/MODEL_HEALTH", token, body)
     except Exception as exc:
-        if "-> 404" not in str(exc):
+        # 只有「变量还不存在」才回退到创建；判定的依据是状态码，不是错误文本。
+        if not (isinstance(exc, c.GitHubApiError) and exc.status == 404):
             print(f"update health failed: {exc}", file=sys.stderr)
             sys.exit(1)
         c.request("POST", f"/repos/{repo}/actions/variables", token, body)

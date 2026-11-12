@@ -214,8 +214,8 @@ def wait_run(b_repo: str, pat: str, run_id: str) -> dict:
         try:
             run = api("GET", f"/repos/{b_repo}/actions/runs/{run_id}", pat)
         except Exception as exc:
-            message = str(exc)
-            if any(code in message for code in ("-> 401:", "-> 403:", "-> 404:")):
+            # 鉴权类错误重试无意义，直接上抛；其余（含 5xx 与网络错误）继续轮询到超时。
+            if isinstance(exc, c.GitHubApiError) and exc.status in (401, 403, 404):
                 raise
             print(f"poll failed: {exc}", file=sys.stderr)
             if time.monotonic() > deadline:

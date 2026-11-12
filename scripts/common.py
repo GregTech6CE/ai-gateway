@@ -37,6 +37,22 @@ def sha256_text(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
+class GitHubApiError(RuntimeError):
+    """GitHub REST 的非 2xx 响应。
+
+    消息文本保持原样（`GitHub API {method} {path} -> {status}: {detail}`），因为既有日志、
+    artifact 与历史 run 都以它为对照物，改文本会让它们失去可比性。新增的是可判定的
+    `status` 属性——调用方不应再靠子串匹配分支。
+    """
+
+    def __init__(self, method: str, path: str, status: int, detail: str):
+        super().__init__(f"GitHub API {method} {path} -> {status}: {detail}")
+        self.method = method
+        self.path = path
+        self.status = status
+        self.detail = detail
+
+
 def request(method: str, path: str, token: str, data=None, timeout: int = 30):
     url = path if path.startswith("http") else API + path
     body = json.dumps(data).encode("utf-8") if data is not None else None
@@ -55,7 +71,7 @@ def request(method: str, path: str, token: str, data=None, timeout: int = 30):
             return json.loads(raw) if raw else {}
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", "replace")[:400]
-        raise RuntimeError(f"GitHub API {method} {path} -> {exc.code}: {detail}") from None
+        raise GitHubApiError(method, path, exc.code, detail) from None
 
 
 def paginate(path: str, token: str, max_pages: int = 10):
@@ -98,6 +114,7 @@ FIELD_RE = re.compile(r"([a-z_]+)=([^\s]+)")
 
 
 def parse_markers(body: str) -> list[dict]:
+    """解析 bot 评论里的 lily 标记。"""
     out = []
     for match in MARKER_RE.finditer(body or ""):
         out.append({"kind": match.group(1), **dict(FIELD_RE.findall(match.group(2)))})
