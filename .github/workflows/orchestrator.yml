@@ -57,7 +57,6 @@ jobs:
     outputs:
       decision: ${{ steps.gate.outputs.decision }}
       reason: ${{ steps.gate.outputs.reason }}
-      snapshot_hash: ${{ steps.gate.outputs.snapshot_hash }}
       code_repo: ${{ steps.gate.outputs.code_repo }}
       code_ref: ${{ steps.gate.outputs.code_ref }}
       code_refs: ${{ steps.gate.outputs.code_refs }}
@@ -295,13 +294,12 @@ jobs:
               exit 0
             fi
           fi
-          SNAPSHOT=$(python -c 'import json;print(json.load(open("inputs/snapshot.json")).get("sha256",""))' 2>/dev/null || true)
           TITLE=$(python -c 'import json;print(json.load(open("inputs/snapshot.json")).get("issue",{}).get("title",""))' 2>/dev/null || true)
           STATUS=$(python -c 'import json;print(json.load(open("outputs/result.json")).get("status","failed"))' 2>/dev/null || echo failed)
           REASON=$(python -c 'import json;print(json.load(open("outputs/result.json")).get("reason",""))' 2>/dev/null || true)
           python scripts/render.py \
             --repo "$REPO" --issue "$ISSUE" \
-            --issue-title "$TITLE" --snapshot "$SNAPSHOT" \
+            --issue-title "$TITLE" \
             --relevance outputs/relevance.json \
             --run-url "$B_RUN_URL" \
             --status "$STATUS" --reason "$REASON"
@@ -333,8 +331,7 @@ jobs:
         run: |
           set -euo pipefail
           if [ ! -f outputs/comment.md ]; then exit 0; fi
-          SNAPSHOT=$(python -c 'import json;print(json.load(open("inputs/snapshot.json")).get("sha256",""))' 2>/dev/null || true)
-          SNAPSHOT_HASH="$SNAPSHOT" python scripts/write_back.py
+          python scripts/write_back.py
       - name: Update model health
         if: always()
         continue-on-error: true

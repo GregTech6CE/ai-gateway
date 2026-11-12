@@ -91,8 +91,8 @@ def evidence_block(items) -> str:
     return "\n".join(lines) or "未提供。"
 
 
-def marker_for(kind: str, repo: str, issue: str, snapshot: str) -> str:
-    return c.marker(kind, repo=repo, issue=issue, snapshot=snapshot)
+def marker_for(kind: str, repo: str, issue: str) -> str:
+    return c.marker(kind, repo=repo, issue=issue)
 
 
 PLACEHOLDER = re.compile(r"\{\{([a-z_0-9]+)\}\}")
@@ -133,7 +133,6 @@ def render_answer(
     answer: dict,
     repo_cfg: dict,
     run_url: str,
-    snapshot: str,
     partial: bool,
     issue_title: str = "",
     issue_number: str = "",
@@ -181,7 +180,7 @@ def render_answer(
             f"[GitHub Action 运行记录]({run_url})" if run_url else ""
         ),
         "{{marker}}": marker_for(
-            "partial" if partial else "done", repo_cfg.get("_repo", ""), issue, snapshot
+            "partial" if partial else "done", repo_cfg.get("_repo", ""), issue
         ),
     }
     text = _fill(template, values)
@@ -201,7 +200,6 @@ def render_markdown(
     markdown: str,
     repo_cfg: dict,
     run_url: str,
-    snapshot: str,
     reason: str,
     issue_title: str = "",
     issue_number: str = "",
@@ -212,7 +210,7 @@ def render_markdown(
     text = f"## Issue 概要\n\n标题：{title} (#{issue})\n\n" + banner + _escape(markdown.strip())
     if run_url:
         text += f"\n\n---\n\n[GitHub Action 运行记录]({run_url})"
-    text += "\n\n" + marker_for("partial", repo_cfg.get("_repo", ""), issue, snapshot)
+    text += "\n\n" + marker_for("partial", repo_cfg.get("_repo", ""), issue)
     return text[:MAX_LENGTH]
 
 
@@ -220,7 +218,6 @@ def render_rejection(
     relevance: dict,
     repo_cfg: dict,
     run_url: str,
-    snapshot: str,
     issue_title: str = "",
     issue_number: str = "",
 ) -> str:
@@ -247,7 +244,7 @@ def render_rejection(
         "{{run_link_block}}": (
             f"[GitHub Action 运行记录]({run_url})" if run_url else ""
         ),
-        "{{marker}}": marker_for("rejected", repo_cfg.get("_repo", ""), issue, snapshot),
+        "{{marker}}": marker_for("rejected", repo_cfg.get("_repo", ""), issue),
     }
     text = _fill(template, values)
     return text[:MAX_LENGTH]
@@ -256,7 +253,6 @@ def render_rejection(
 def render_failure(
     repo_cfg: dict,
     run_url: str,
-    snapshot: str,
     reason: str = "",
     issue_title: str = "",
     issue_number: str = "",
@@ -268,7 +264,7 @@ def render_failure(
         f"## Issue 概要\n\n标题：{title} (#{issue})\n\n"
         f"分析未能完成{detail}。可以稍后重新触发，或由维护者手动查看运行记录。\n\n"
         + (f"[GitHub Action 运行记录]({run_url})\n\n" if run_url else "")
-        + marker_for("failed", repo_cfg.get("_repo", ""), issue, snapshot)
+        + marker_for("failed", repo_cfg.get("_repo", ""), issue)
     )
 
 
@@ -277,7 +273,6 @@ def main() -> None:
     parser.add_argument("--repo", required=True)
     parser.add_argument("--issue", required=True)
     parser.add_argument("--issue-title", default="")
-    parser.add_argument("--snapshot", required=True)
     parser.add_argument("--run-url", default="")
     parser.add_argument("--answer", default="outputs/answer.json")
     parser.add_argument("--markdown", default="outputs/answer.md")
@@ -305,7 +300,6 @@ def main() -> None:
                 relevance,
                 repo_cfg,
                 args.run_url,
-                args.snapshot,
                 issue_title=args.issue_title,
                 issue_number=args.issue,
             )
@@ -319,7 +313,6 @@ def main() -> None:
                 data,
                 repo_cfg,
                 args.run_url,
-                args.snapshot,
                 False,
                 issue_title=args.issue_title,
                 issue_number=args.issue,
@@ -329,7 +322,6 @@ def main() -> None:
                 markdown_path.read_text(encoding="utf-8"),
                 repo_cfg,
                 args.run_url,
-                args.snapshot,
                 "结构化结果无效",
                 issue_title=args.issue_title,
                 issue_number=args.issue,
@@ -339,7 +331,6 @@ def main() -> None:
             markdown_path.read_text(encoding="utf-8"),
             repo_cfg,
             args.run_url,
-            args.snapshot,
             args.reason or "分析未完成",
             issue_title=args.issue_title,
             issue_number=args.issue,
@@ -349,7 +340,6 @@ def main() -> None:
         text = render_failure(
             repo_cfg,
             args.run_url,
-            args.snapshot,
             args.reason,
             issue_title=args.issue_title,
             issue_number=args.issue,

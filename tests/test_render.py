@@ -25,7 +25,7 @@ class RenderTest(unittest.TestCase):
         }
         repo_cfg = {"_repo": "GregTech6CE/GregTech6", "_issue": "1"}
         text = render.render_rejection(
-            relevance, repo_cfg, "https://example/run/1", "abc", issue_title="测试", issue_number="1"
+            relevance, repo_cfg, "https://example/run/1", issue_title="测试", issue_number="1"
         )
         self.assertIn("未进入代码分析", text)
         self.assertIn("标题：测试 (#1)", text)
@@ -42,7 +42,6 @@ class RenderTest(unittest.TestCase):
             answer,
             repo_cfg,
             "https://example/run/1",
-            "abc123",
             partial=False,
             issue_title="测试标题",
             issue_number="1",
@@ -76,7 +75,6 @@ class RenderTest(unittest.TestCase):
             "# 片段",
             repo_cfg,
             "",
-            "abc",
             "timeout 60min",
             issue_title="测试标题",
             issue_number="1",
@@ -102,7 +100,7 @@ class RenderTest(unittest.TestCase):
             "triage": {"write_only": ["crash"]},
         }
         text = render.render_answer(
-            answer, repo_cfg, "", "abc", partial=False, issue_title="t", issue_number="1"
+            answer, repo_cfg, "", partial=False, issue_title="t", issue_number="1"
         )
         self.assertIn("建议标签：`crash`", text)
         self.assertNotIn("wontfix", text)
@@ -123,7 +121,7 @@ class RenderTest(unittest.TestCase):
             },
         }
         text = render.render_answer(
-            answer, repo_cfg, "", "abc", partial=False, issue_title="t", issue_number="1"
+            answer, repo_cfg, "", partial=False, issue_title="t", issue_number="1"
         )
         self.assertIn("- 分类：`bug`", text)
         self.assertIn("建议标签：`crash`, `1.21.1`", text)
@@ -139,7 +137,6 @@ class RenderTest(unittest.TestCase):
         text = render.render_failure(
             repo_cfg,
             "https://example/run/1",
-            "abc",
             "rate 429 after 5 retries",
             issue_title="测试标题",
             issue_number="1",

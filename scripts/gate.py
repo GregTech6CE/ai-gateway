@@ -262,8 +262,6 @@ def main() -> None:
         },
         "captured_at": now.isoformat(),
     }
-    canonical = json.dumps(snapshot, ensure_ascii=False, sort_keys=True)
-    snapshot["sha256"] = c.sha256_text(canonical)
     c.dump_json(INPUTS / "snapshot.json", snapshot)
     (INPUTS / "issue.md").write_text(
         f"# {snapshot['issue']['title']}\n\n{body}\n", encoding="utf-8"
@@ -284,7 +282,6 @@ def main() -> None:
     finish(
         "proceed",
         "accepted",
-        snapshot_hash=snapshot["sha256"],
         code_ref=snapshot["code_ref"],
         code_repo=snapshot["code_repo"],
         code_refs=code_refs,

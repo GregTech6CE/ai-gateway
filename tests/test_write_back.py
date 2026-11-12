@@ -21,7 +21,6 @@ CFG = {
     "gh_rw": "rw",
     "gh_ro": "ro",
     "bot_enabled": "true",
-    "snapshot": "abc",
     "run_url": "",
     "dry_run": False,
     "repo_cfg": {"_repo": "GregTech6CE/GregTech6", "enabled": True},

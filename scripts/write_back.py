@@ -33,7 +33,6 @@ def load_config() -> dict:
         "gh_rw": gh_rw,
         "gh_ro": c.env("GH_RO_TOKEN", gh_rw),
         "bot_enabled": c.env("BOT_ENABLED", "true").lower(),
-        "snapshot": c.env("SNAPSHOT_HASH", ""),
         "run_url": c.env("RUN_URL", ""),
         "dry_run": c.env("DRY_RUN", "false").lower() == "true",
         "repo_cfg": c.load_repo(repo),
@@ -121,7 +120,7 @@ def post(body: str, cfg: dict) -> None:
 def stopped(reason: str, cfg: dict) -> None:
     body = (
         f"分析已停止（{reason}）。\n\n"
-        + c.marker("stopped", repo=cfg["repo"], issue=cfg["issue"], snapshot=cfg["snapshot"])
+        + c.marker("stopped", repo=cfg["repo"], issue=cfg["issue"])
     )
     post(body, cfg)
 
@@ -158,7 +157,7 @@ def main(cfg: dict | None = None) -> None:
         blocked = (
             "分析结果包含疑似敏感信息，已被拦截，未公开。维护者可在运行 artifact 中查看。\n\n"
             + (f"[运行记录]({cfg['run_url']})\n\n" if cfg["run_url"] else "")
-            + c.marker("blocked", repo=repo, issue=issue_number, snapshot=cfg["snapshot"])
+            + c.marker("blocked", repo=repo, issue=issue_number)
         )
         post(blocked, cfg)
         sys.exit(1)
@@ -171,7 +170,7 @@ def main(cfg: dict | None = None) -> None:
         text = (
             f"分析未能完成{detail}。可以稍后重新触发，或由维护者手动查看运行记录。\n\n"
             + (f"[运行记录]({cfg['run_url']})\n\n" if cfg["run_url"] else "")
-            + c.marker("failed", repo=repo, issue=issue_number, snapshot=cfg["snapshot"])
+            + c.marker("failed", repo=repo, issue=issue_number)
         )
 
     # 精确密钥必须一起传，否则 `SCAN_SECRET_*` 在这一层不被拦截。
@@ -181,7 +180,7 @@ def main(cfg: dict | None = None) -> None:
         blocked = (
             "分析结果包含疑似敏感信息，已被拦截，未公开。维护者可在运行 artifact 中查看。\n\n"
             + (f"[运行记录]({cfg['run_url']})\n\n" if cfg["run_url"] else "")
-            + c.marker("blocked", repo=repo, issue=issue_number, snapshot=cfg["snapshot"])
+            + c.marker("blocked", repo=repo, issue=issue_number)
         )
         post(blocked, cfg)
         sys.exit(1)

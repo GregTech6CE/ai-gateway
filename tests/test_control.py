@@ -78,7 +78,7 @@ class PlaceholderTest(unittest.TestCase):
 
         def fake_api(method, path, token, data=None):
             calls.append(method)
-            return {"body": "<!-- lily:done repo=o/r issue=7 snapshot=abc -->"}
+            return {"body": "<!-- lily:done repo=o/r issue=7 request=abc -->"}
 
         env = {
             "REPO": "o/r",
