@@ -25,6 +25,15 @@ PEM_BLOCK = re.compile(
 )
 
 
+def secrets_from_env(prefix: str = "SCAN_SECRET_") -> list[str]:
+    """收集 `SCAN_SECRET_*` 环境变量里的精确密钥值。
+
+    这些值不经任何模式匹配，直接做子串比对与替换——它们来自调用方的已知凭据，比正则可靠。
+    单点定义，避免 CLI 与写回路径各写一遍而漏传。
+    """
+    return [value for key, value in os.environ.items() if key.startswith(prefix) and value]
+
+
 def _secrets(extra: list[str] | None) -> list[str]:
     """长值先替换，避免短值先命中导致长值被切碎后无法整体匹配。"""
     return sorted({s for s in extra or [] if s and len(s) >= 8}, key=len, reverse=True)
@@ -59,7 +68,7 @@ def main() -> None:
     args = parser.parse_args()
     with open(args.path, encoding="utf-8", newline="") as fh:
         text = fh.read()
-    extra = [value for key, value in os.environ.items() if key.startswith("SCAN_SECRET_")]
+    extra = secrets_from_env()
     hits = scan_text(text, extra)
     if args.redact:
         cleaned = redact(text, extra)
