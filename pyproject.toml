@@ -1,0 +1,14 @@
+[project]
+name = "gt6-ai-gateway"
+version = "0.0.0"
+description = "Issue 诊断网关：GitHub Actions 编排 + Codex 监督 + 确定性渲染"
+requires-python = ">=3.11"
+# 运行时零依赖是一条安全属性，不是巧合：脚本只用标准库。
+# 这里显式写下来，让它可被检查（`pip install .` 不会拉任何包），也让迁移后的
+# 「运行期只有内联的 zod」成为同一条不变量的延续。
+dependencies = []
+
+[project.optional-dependencies]
+# 测试用的是标准库 unittest，`python -m unittest discover -s tests` 即可跑，
+# 因此这里不引入 pytest。需要更好的失败信息时再单独装。
+dev = []
