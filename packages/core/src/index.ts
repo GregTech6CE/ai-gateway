@@ -1,4 +1,4 @@
 /**
- * 占位入口。W1 只验证工作区能安装与构建，业务代码在后续步骤逐步迁入。
+ * @gt6ce/core 的公共入口。业务模块在后续步骤逐步加入。
  */
 export const PACKAGE_NAME = '@gt6ce/core';
