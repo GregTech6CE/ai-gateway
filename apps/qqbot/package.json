@@ -7,10 +7,15 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
+    "build": "tsdown",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@gt6ce/core": "workspace:*"
+  },
+  "devDependencies": {
+    "tsdown": "0.23.7",
+    "typescript": "~5.9.3"
   },
   "engines": {
     "node": ">=22.0.0"
