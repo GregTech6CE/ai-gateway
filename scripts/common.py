@@ -113,11 +113,21 @@ MARKER_RE = re.compile(r"<!--\s*lily:([a-z]+)\s+([^>]*?)-->", re.S)
 FIELD_RE = re.compile(r"([a-z_]+)=([^\s]+)")
 
 
-def parse_markers(body: str) -> list[dict]:
-    """解析 bot 评论里的 lily 标记。"""
+def parse_markers(body: str, *, repo: str | None = None, issue: str | None = None) -> list[dict]:
+    """解析 bot 评论里的 lily 标记。
+
+    给出 `repo` / `issue` 时，声明了对应字段但与上下文不符的标记会被丢弃。这挡住的是
+    「把别的 issue 的标记复制过来」这类误操作，不承担防注入职责——注入由渲染侧的单次替换
+    与 `<!--` 转义处理。未声明字段的标记（如将来的 `stop`）不做校验。
+    """
     out = []
     for match in MARKER_RE.finditer(body or ""):
-        out.append({"kind": match.group(1), **dict(FIELD_RE.findall(match.group(2)))})
+        parsed = {"kind": match.group(1), **dict(FIELD_RE.findall(match.group(2)))}
+        if repo is not None and parsed.get("repo") and parsed["repo"] != repo:
+            continue
+        if issue is not None and parsed.get("issue") and str(parsed["issue"]) != str(issue):
+            continue
+        out.append(parsed)
     return out
 
 

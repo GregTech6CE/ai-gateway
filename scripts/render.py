@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -94,6 +95,40 @@ def marker_for(kind: str, repo: str, issue: str, snapshot: str) -> str:
     return c.marker(kind, repo=repo, issue=issue, snapshot=snapshot)
 
 
+PLACEHOLDER = re.compile(r"\{\{([a-z_0-9]+)\}\}")
+
+
+def _escape(value: str) -> str:
+    """转义不可信文本里的 `<!--`，使它不再构成 HTML 注释。
+
+    文字照样可见（`&lt;` 在 markdown 里渲染为 `<`），但 `gate.parse_markers` 扫不到。
+    """
+    return value.replace("<!--", "&lt;!--")
+
+
+def _fill(
+    template: str, values: dict[str, str], *, trusted: tuple[str, ...] = ("{{marker}}",)
+) -> str:
+    """单次扫描替换占位符。
+
+    与逐键 `str.replace` 有两处不同，都是为了堵住「内容里带标记」这条路径：
+
+    1. **单次扫描**：替换进去的文本不再被后续键匹配，标题里写 `{{conclusion}}` 不会被展开。
+    2. **非 trusted 值把 `<!--` 转义成 `&lt;!--`**：issue 标题或模型产出里写
+       `<!-- lily:done ... -->` 时，渲染出来仍是同样肉眼可见的文字，但不再是 HTML 注释，
+       因而不会被 `gate.parse_markers` 当成幂等标记。
+    """
+
+    def sub(match: re.Match) -> str:
+        key = match.group(0)
+        if key not in values:
+            return key
+        value = values[key]
+        return value if key in trusted else _escape(value)
+
+    return PLACEHOLDER.sub(sub, template)
+
+
 def render_answer(
     answer: dict,
     repo_cfg: dict,
@@ -149,12 +184,10 @@ def render_answer(
             "partial" if partial else "done", repo_cfg.get("_repo", ""), issue, snapshot
         ),
     }
-    text = template
-    for key, value in values.items():
-        text = text.replace(key, value)
+    text = _fill(template, values)
     if len(text) > MAX_LENGTH:
         text = (
-            f"## Issue 概要\n\n标题：{title} (#{issue})\n\n"
+            f"## Issue 概要\n\n标题：{_escape(title)} (#{issue})\n\n"
             "## 结论\n\n"
             + values["{{conclusion}}"]
             + "\n\n> 评论过长，完整证据与修复方案见运行 artifact。\n\n"
@@ -174,9 +207,9 @@ def render_markdown(
     issue_number: str = "",
 ) -> str:
     issue = str(issue_number or repo_cfg.get("_issue", ""))
-    title = issue_title.strip() or "未提供标题"
+    title = _escape(issue_title.strip() or "未提供标题")
     banner = f"> **部分结论**：{reason}，以下为已完成内容。\n\n"
-    text = f"## Issue 概要\n\n标题：{title} (#{issue})\n\n" + banner + markdown.strip()
+    text = f"## Issue 概要\n\n标题：{title} (#{issue})\n\n" + banner + _escape(markdown.strip())
     if run_url:
         text += f"\n\n---\n\n[GitHub Action 运行记录]({run_url})"
     text += "\n\n" + marker_for("partial", repo_cfg.get("_repo", ""), issue, snapshot)
@@ -216,9 +249,7 @@ def render_rejection(
         ),
         "{{marker}}": marker_for("rejected", repo_cfg.get("_repo", ""), issue, snapshot),
     }
-    text = template
-    for key, value in values.items():
-        text = text.replace(key, value)
+    text = _fill(template, values)
     return text[:MAX_LENGTH]
 
 
@@ -231,7 +262,7 @@ def render_failure(
     issue_number: str = "",
 ) -> str:
     issue = str(issue_number or repo_cfg.get("_issue", ""))
-    title = issue_title.strip() or "未提供标题"
+    title = _escape(issue_title.strip() or "未提供标题")
     detail = f"（{reason.strip()}）" if reason.strip() else ""
     return (
         f"## Issue 概要\n\n标题：{title} (#{issue})\n\n"
