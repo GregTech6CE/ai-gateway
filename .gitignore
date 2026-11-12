@@ -13,3 +13,9 @@ inputs/
 outputs/
 __pycache__/
 *.pyc
+
+# Rush / pnpm
+common/temp/
+common/autoinstallers/*/.npmrc
+.rush/
+dist/

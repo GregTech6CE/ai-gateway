@@ -1,0 +1,37 @@
+/**
+ * GT6 Issue 网关的 Rush monorepo 配置。
+ *
+ * 组合取自同工作区的 GregTech6-Translation-Groupware（已验证可用）：
+ * Rush + pnpm workspaces（useWorkspaces: true，见 common/config/rush/pnpm-config.json）。
+ *
+ * 版本策略：
+ * - rushVersion 用最新稳定版，pnpmVersion 钉在 pnpm 10 线的最新版。
+ * - nodeSupportedVersionRange 取 >=22 而不是 >=24：本机与 ubuntu-latest 都在 22，
+ *   而 22 已经覆盖本项目需要的全部能力（全局 fetch、structuredClone、ESM）。
+ */
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/rush/v5/rush.schema.json",
+  "rushVersion": "5.182.1",
+  "pnpmVersion": "10.34.9",
+  "nodeSupportedVersionRange": ">=22.0.0",
+  "projectFolderMinDepth": 2,
+  "projectFolderMaxDepth": 2,
+  "ensureConsistentVersions": true,
+  "projects": [
+    {
+      "packageName": "@gt6ce/core",
+      "projectFolder": "packages/core",
+      "shouldPublish": false
+    },
+    {
+      "packageName": "@gt6ce/ci",
+      "projectFolder": "apps/ci",
+      "shouldPublish": false
+    },
+    {
+      "packageName": "@gt6ce/qqbot",
+      "projectFolder": "apps/qqbot",
+      "shouldPublish": false
+    }
+  ]
+}

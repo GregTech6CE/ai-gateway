@@ -1,0 +1,25 @@
+lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+  excludeLinksFromLockfile: false
+
+pnpmfileChecksum: sha256-FceiOBivXBfnQ6+mNFF4or5E/6NvJXB3oz3cjl5O7OM=
+
+importers:
+
+  .: {}
+
+  ../../apps/ci:
+    dependencies:
+      '@gt6ce/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+
+  ../../apps/qqbot:
+    dependencies:
+      '@gt6ce/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+
+  ../../packages/core: {}

@@ -1,0 +1,18 @@
+{
+  "name": "@gt6ce/ci",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "GitHub Actions 适配层：gate / prefetch / supervisor / render / write-back / control / update-health。",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gt6ce/core": "workspace:*"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}
