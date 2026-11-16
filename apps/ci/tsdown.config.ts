@@ -20,5 +20,7 @@ export default defineConfig({
   deps: { alwaysBundle: [/^@gt6ce\//, /^@ai-sdk\//, 'ai', /^zod(\/|$)/] },
   // 多入口必然分包：共享 chunk 落在 dist/ 根目录，`dist/jobs/*.js` 用相对路径引用。
   // 工作流整目录上传/下载 dist，缺一不可，不要在 artifact 里只挑单个 job 文件。
+  // 构建耗时提示是性能建议，不是错误；关掉以免 Rush 把警告当成非零退出。
+  checks: { bundlerTimings: false },
   outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
 });

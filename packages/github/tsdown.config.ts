@@ -16,5 +16,7 @@ export default defineConfig({
   dts: { sourcemap: false },
   clean: true,
   deps: { alwaysBundle: [/^@gt6ce\//, /^zod(\/|$)/] },
+  // 构建耗时提示是性能建议，不是错误；关掉以免 Rush 把警告当成非零退出。
+  checks: { bundlerTimings: false },
   outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
 });

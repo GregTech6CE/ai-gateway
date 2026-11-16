@@ -18,5 +18,7 @@ export default defineConfig({
   deps: { alwaysBundle: [/^@gt6ce\//, /^@ai-sdk\//, 'ai', /^zod(\/|$)/] },
   // AI SDK 内部有动态 import；禁用分包，保证 dist 是单文件，artifact 不会漏 chunk。
   outputOptions: { codeSplitting: false },
+  // 构建耗时提示是性能建议，不是错误；关掉以免 Rush 把警告当成非零退出。
+  checks: { bundlerTimings: false },
   outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
 });
