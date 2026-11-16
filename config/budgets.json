@@ -1,17 +1,13 @@
 {
   "defaults": {
-    "per_issue_per_hour": 1,
-    "per_repo_per_day": 30,
-    "global_per_day": 50,
+    "max_issue_age_days": 7,
     "requested_stale_minutes": 70,
     "relevance": {
       "timeout_seconds": 90,
-      "max_tokens": 400
+      "max_output_tokens": 400
     },
     "l2": {
       "timeout_minutes": 60,
-      "max_turns": 0,
-      "max_tokens": 0,
       "loop_repeat_threshold": 3,
       "stall_seconds": 180
     },
