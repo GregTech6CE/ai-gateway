@@ -12,9 +12,15 @@ importers:
 
   ../../apps/ci:
     devDependencies:
-      '@gt6ce/core':
+      '@gt6ce/github':
         specifier: workspace:*
-        version: link:../../packages/core
+        version: link:../../packages/github
+      '@gt6ce/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
       tsdown:
         specifier: 0.23.7
         version: 0.23.7(typescript@5.9.3)
@@ -24,9 +30,15 @@ importers:
 
   ../../apps/qqbot:
     devDependencies:
-      '@gt6ce/core':
+      '@gt6ce/qqbot':
         specifier: workspace:*
-        version: link:../../packages/core
+        version: link:../../packages/qqbot
+      '@gt6ce/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
       tsdown:
         specifier: 0.23.7
         version: 0.23.7(typescript@5.9.3)
@@ -34,7 +46,68 @@ importers:
         specifier: ~5.9.3
         version: 5.9.3
 
-  ../../packages/core:
+  ../../packages/agent:
+    dependencies:
+      '@gt6ce/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      tsdown:
+        specifier: 0.23.7
+        version: 0.23.7(typescript@5.9.3)
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  ../../packages/github:
+    dependencies:
+      '@gt6ce/shared':
+        specifier: workspace:*
+        version: link:../shared
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      tsdown:
+        specifier: 0.23.7
+        version: 0.23.7(typescript@5.9.3)
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+      vite:
+        specifier: 8.3.8
+        version: 8.3.8(@types/node@22.20.5)
+      vitest:
+        specifier: 5.1.0
+        version: 5.1.0(@types/node@22.20.5)(vite@8.3.8(@types/node@22.20.5))
+
+  ../../packages/qqbot:
+    dependencies:
+      '@gt6ce/shared':
+        specifier: workspace:*
+        version: link:../shared
+    devDependencies:
+      '@types/node':
+        specifier: 22.20.5
+        version: 22.20.5
+      tsdown:
+        specifier: 0.23.7
+        version: 0.23.7(typescript@5.9.3)
+      typescript:
+        specifier: ~5.9.3
+        version: 5.9.3
+
+  ../../packages/shared:
+    dependencies:
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
     devDependencies:
       '@types/node':
         specifier: 22.20.5
@@ -247,6 +320,12 @@ packages:
 
   '@rolldown/binding-openharmony-arm64@1.2.19':
     resolution: {integrity: sha512-+KWTWNoPt+CfSq94CiceWu3yPE+QzkaG+phPyz9G60tmZLwfQkcA4AeksafzvJAw4pvg1mcd5a1TkUqVv0s4JA==}
+    engines: {node: ^20.19.0 || >=22.12.0}
+    cpu: [arm64]
+    os: [openharmony]
+
+  '@rolldown/binding-openharmony-arm64@1.3.2':
+    resolution: {integrity: sha512-ozdbCjHfh0N//wJNExjJlSlcDaeIKo8k1ktzkLUyESr2Gu/Qw7nBYxKe3jgtoaxda570vg10WdYosre82263hQ==}
     engines: {node: ^20.19.0 || >=22.12.0}
     cpu: [arm64]
     os: [openharmony]
@@ -721,6 +800,9 @@ packages:
       '@yuku-toolchain/wasm':
         optional: true
 
+  zod@3.25.76:
+    resolution: {integrity: sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==}
+
 snapshots:
 
   '@emnapi/core@2.0.0-beta.2':
@@ -836,6 +918,9 @@ snapshots:
     optional: true
 
   '@rolldown/binding-openharmony-arm64@1.2.19':
+    optional: true
+
+  '@rolldown/binding-openharmony-arm64@1.3.2':
     optional: true
 
   '@rolldown/binding-wasm32-wasi@1.2.19':
@@ -1073,6 +1158,7 @@ snapshots:
       '@rolldown/binding-linux-s390x-gnu': 1.3.2
       '@rolldown/binding-linux-x64-gnu': 1.3.2
       '@rolldown/binding-linux-x64-musl': 1.3.2
+      '@rolldown/binding-openharmony-arm64': 1.3.2
       '@rolldown/binding-wasm32-wasi': 1.3.2
       '@rolldown/binding-win32-arm64-msvc': 1.3.2
       '@rolldown/binding-win32-x64-msvc': 1.3.2
@@ -1174,3 +1260,5 @@ snapshots:
       '@yuku-toolchain/linux-x64': 0.28.0
       '@yuku-toolchain/win32-arm64': 0.28.0
       '@yuku-toolchain/win32-x64': 0.28.0
+
+  zod@3.25.76: {}

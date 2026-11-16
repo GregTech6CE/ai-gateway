@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "description": "GitHub Actions 适配层：gate / prefetch / supervisor / render / write-back / control / update-health。",
+  "description": "GitHub Actions 适配层：gate / analysis / finalize / control / update-health。",
   "files": [
     "dist"
   ],
@@ -15,7 +15,9 @@
     "pack": "node ../../common/scripts/install-run-rush-pnpm.js pack --pack-destination ../../common/temp/artifacts"
   },
   "devDependencies": {
-    "@gt6ce/core": "workspace:*",
+    "@gt6ce/github": "workspace:*",
+    "@gt6ce/shared": "workspace:*",
+    "@types/node": "22.20.5",
     "tsdown": "0.23.7",
     "typescript": "~5.9.3"
   },

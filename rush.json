@@ -8,6 +8,9 @@
  * - rushVersion 用最新稳定版，pnpmVersion 钉在 pnpm 10 线的最新版。
  * - nodeSupportedVersionRange 取 >=22 而不是 >=24：本机与 ubuntu-latest 都在 22，
  *   而 22 已经覆盖本项目需要的全部能力（全局 fetch、structuredClone、ESM）。
+ *
+ * 分包：`packages/*` 是领域库，`apps/*` 是终端产物。库之间的依赖方向固定为
+ * `github | agent | qqbot -> shared`，同级库之间不互相引用。
  */
 {
   "$schema": "https://developer.microsoft.com/json-schemas/rush/v5/rush.schema.json",
@@ -19,8 +22,23 @@
   "ensureConsistentVersions": true,
   "projects": [
     {
-      "packageName": "@gt6ce/core",
-      "projectFolder": "packages/core",
+      "packageName": "@gt6ce/shared",
+      "projectFolder": "packages/shared",
+      "shouldPublish": false
+    },
+    {
+      "packageName": "@gt6ce/github",
+      "projectFolder": "packages/github",
+      "shouldPublish": false
+    },
+    {
+      "packageName": "@gt6ce/agent",
+      "projectFolder": "packages/agent",
+      "shouldPublish": false
+    },
+    {
+      "packageName": "@gt6ce/qqbot",
+      "projectFolder": "packages/qqbot",
       "shouldPublish": false
     },
     {
@@ -29,7 +47,7 @@
       "shouldPublish": false
     },
     {
-      "packageName": "@gt6ce/qqbot",
+      "packageName": "@gt6ce/qqbot-app",
       "projectFolder": "apps/qqbot",
       "shouldPublish": false
     }

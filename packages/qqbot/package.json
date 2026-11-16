@@ -1,5 +1,5 @@
 {
-  "name": "@gt6ce/core",
+  "name": "@gt6ce/qqbot",
   "version": "0.0.0",
   "private": true,
   "type": "module",
@@ -11,18 +11,18 @@
       "import": "./dist/index.js"
     }
   },
-  "description": "共享业务层：契约、渲染、模型池、扫描、provision。库形态，不读环境变量、不发请求。",
+  "description": "QQ 官方机器人协议适配层：网关连接、会话持久化、事件归一化。当前为占位包，实现见 Step 3。",
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gt6ce/shared": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "22.20.5",
     "tsdown": "0.23.7",
-    "typescript": "~5.9.3",
-    "vite": "8.3.8",
-    "vitest": "5.1.0"
+    "typescript": "~5.9.3"
   },
   "engines": {
     "node": ">=22.0.0"

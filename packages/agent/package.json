@@ -1,0 +1,30 @@
+{
+  "name": "@gt6ce/agent",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "description": "模型池与执行器：故障切换、worktree 准备、受控 bash。当前为占位包，实现见 Step 2。",
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@gt6ce/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsdown": "0.23.7",
+    "typescript": "~5.9.3"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

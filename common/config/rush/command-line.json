@@ -3,9 +3,27 @@
   "commands": [
     {
       "commandKind": "bulk",
+      "name": "typecheck",
+      "summary": "对全部项目做 tsc --noEmit 类型检查",
+      "description": "按依赖顺序执行各项目的 typecheck 脚本；无该脚本的项目跳过。不生成产物，因此不进构建缓存。",
+      "enableParallelism": false,
+      "ignoreMissingScript": true,
+      "incremental": false
+    },
+    {
+      "commandKind": "bulk",
+      "name": "test",
+      "summary": "运行各项目的单元测试",
+      "description": "按依赖顺序执行各项目的 test 脚本（当前为 vitest run）；无测试的项目跳过。",
+      "enableParallelism": false,
+      "ignoreMissingScript": true,
+      "incremental": false
+    },
+    {
+      "commandKind": "bulk",
       "name": "pack",
       "summary": "把已构建的产物打成 tgz，放到 common/temp/artifacts",
-      "description": "每个应用包各自 npm pack。没有 pack 脚本的项目（如 @gt6ce/core，产物已内联进应用）会被跳过。",
+      "description": "每个应用包各自 npm pack。没有 pack 脚本的项目（如库包，产物已内联进应用）会被跳过。",
       "enableParallelism": false,
       "ignoreMissingScript": true,
       "incremental": false
