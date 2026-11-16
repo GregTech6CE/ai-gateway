@@ -5,6 +5,7 @@
  * 传入的 baseURL。这样 agent-svc 容器可以在没有 GitHub 权限、只有 LLM Key 的网络边界里运行。
  */
 export * from './analyzer.ts';
+export * from './draft.ts';
 export * from './model-pool.ts';
 export * from './tools.ts';
 export * from './workspace.ts';

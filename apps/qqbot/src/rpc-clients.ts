@@ -8,7 +8,41 @@
  * 所有响应都过 Zod 校验：后端返回结构漂移时在这里失败，而不是在业务代码里
  * 变成 `undefined` 继续往下跑。
  */
+import {
+  AgentTaskRequestSchema,
+  AgentTaskSnapshotSchema,
+  CreateIssueRequestSchema,
+  CreatedIssueSchema,
+  TaskAcceptedSchema,
+  type AgentTaskRequest,
+  type AgentTaskSnapshot,
+  type CreateIssueRequest,
+  type CreatedIssue,
+  type IssueDraft,
+} from '@gt6ce/shared';
 import { z } from 'zod';
+
+/**
+ * 契约的唯一来源是 `@gt6ce/shared`。这里重新导出，保持 `@gt6ce/qqbot-app` 既有的
+ * 导入路径不变；三端共用同一份 schema，字段不会各自漂移。
+ */
+export {
+  AgentTaskRequestSchema,
+  AgentTaskSnapshotSchema,
+  CreateIssueRequestSchema,
+  CreatedIssueSchema,
+  IssueDraftInputSchema,
+  IssueDraftSchema,
+  TaskAcceptedSchema,
+} from '@gt6ce/shared';
+export type {
+  AgentTaskRequest,
+  AgentTaskSnapshot,
+  CreateIssueRequest,
+  CreatedIssue,
+  IssueDraft,
+  IssueDraftInput,
+} from '@gt6ce/shared';
 
 export type FetchLike = (input: string, init?: RequestInit) => Promise<Response>;
 
@@ -43,63 +77,6 @@ export class RpcTaskError extends Error {
     this.taskId = taskId;
   }
 }
-
-const REPO_SLUG_PATTERN = /^[^/\s]+\/[^/\s]+$/;
-
-/** agent-svc 产出的结构化草稿。 */
-export const IssueDraftSchema = z.object({
-  title: z.string().trim().min(1).max(256),
-  body: z.string().trim().min(1).max(60_000),
-  labels: z.array(z.string().trim().min(1).max(64)).max(20).default([]),
-});
-export type IssueDraft = z.infer<typeof IssueDraftSchema>;
-
-/** 提交给 agent-svc 的原始信息（由群会话收集，未经模型改写）。 */
-export const IssueDraftInputSchema = z.object({
-  title: z.string().trim().min(1).max(256),
-  version: z.string().trim().min(1),
-  steps: z.string().trim().min(1),
-  expected: z.string().trim().min(1),
-  actual: z.string().trim().min(1).optional(),
-});
-export type IssueDraftInput = z.infer<typeof IssueDraftInputSchema>;
-
-export const AgentTaskRequestSchema = z.object({
-  kind: z.literal('issue-draft'),
-  repo: z.string().regex(REPO_SLUG_PATTERN),
-  scope: z.string().min(1),
-  requester: z.string().min(1),
-  draft: IssueDraftInputSchema,
-});
-export type AgentTaskRequest = z.infer<typeof AgentTaskRequestSchema>;
-
-const TaskAcceptedSchema = z.object({
-  taskId: z.string().min(1),
-});
-
-export const AgentTaskSnapshotSchema = z.object({
-  id: z.string().min(1),
-  status: z.enum(['queued', 'running', 'succeeded', 'failed']),
-  result: IssueDraftSchema.optional(),
-  error: z.string().optional(),
-});
-export type AgentTaskSnapshot = z.infer<typeof AgentTaskSnapshotSchema>;
-
-export const CreatedIssueSchema = z.object({
-  number: z.number().int().positive(),
-  url: z.string().url(),
-});
-export type CreatedIssue = z.infer<typeof CreatedIssueSchema>;
-
-export const CreateIssueRequestSchema = z.object({
-  /** 幂等键：同一个群会话重复提交时由 writer 去重。 */
-  requestId: z.string().min(1),
-  repo: z.string().regex(REPO_SLUG_PATTERN),
-  title: z.string().trim().min(1).max(256),
-  body: z.string().trim().min(1).max(80_000),
-  labels: z.array(z.string().trim().min(1).max(64)).max(20).default([]),
-});
-export type CreateIssueRequest = z.infer<typeof CreateIssueRequestSchema>;
 
 const DEFAULT_TIMEOUT_MS = 15_000;
 
