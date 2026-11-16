@@ -12,6 +12,7 @@
 | [dispatch.md](dispatch.md) | 调用方与本仓库之间的参数契约、run 语义与失败判定 |
 | [jobs/bug-issue-analysis.md](jobs/bug-issue-analysis.md) | 一次 bug issue 分析经过哪些 job、产出什么、如何中止 |
 | [qqbot.md](qqbot.md) | QQ 机器人的凭据边界、命令、绑定配置与协议适配要点 |
+| [deploy.md](deploy.md) | 四容器编排、网络隔离、凭据矩阵、出网白名单与运维 |
 
 根 `AGENTS.md` 是改动约束与安全规则的入口，本目录的 `AGENTS.md` 只管文档写法。
 
@@ -54,6 +55,8 @@ job 内部步骤写在各 job 文档。其余文档只引用，不复述。
 3. 在 `llm` environment 补齐同名 secret；缺 key 时该 endpoint 被记为失败并跳过。
 4. 如果新端点不在 `deploy/egress-allowlist.txt` 里，同步添加域名，并更新
    `.github/workflows/orchestrator.yml` 的 `allowed-endpoints`。
+5. 常驻服务也要用这个端点时，把域名加进 `deploy/egress-allowlist-docker.txt` 并重建
+   `egress-proxy`，否则 `agent-svc` 的请求会在代理处被 403。
 
 两者的共同要求：不要为了接入方便放宽任何 fail-closed 分支，不要在配置里写凭据值。
 

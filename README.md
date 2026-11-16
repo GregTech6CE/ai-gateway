@@ -40,6 +40,19 @@
 
 启动：`QQBOT_CONFIG=/path/to/config.json node apps/qqbot/dist/main.js`。
 
+## 内部服务与部署
+
+QQ 侧不直接接触模型与 GitHub：它调用两个内部 REST 服务，各自持有单一域凭据。
+
+| 服务 | 端点 | 持有 | 不持有 |
+|---|---|---|---|
+| `agent-svc` | `POST /tasks`、`GET /tasks/:id` | `MODEL_KEY_*` | GitHub 凭据 |
+| `github-writer` | `POST /issues` | GitHub token 或 App 私钥 | 模型 key |
+
+两个服务都用 Node 22 原生 `node:http`，不外引 Web 框架；鉴权统一
+`Authorization: Bearer`，`/healthz` 免鉴权。Docker 侧四个容器（含 Tinyproxy 出网代理）
+的网络隔离、凭据矩阵与运维步骤见 [docs/deploy.md](docs/deploy.md)。
+
 ## 密钥
 
 本仓库不含任何凭据。凭据只以 environment secret 与 repo variable 形式存在：
@@ -60,3 +73,4 @@
 - [docs/dispatch.md](docs/dispatch.md)：调度契约
 - [docs/jobs/bug-issue-analysis.md](docs/jobs/bug-issue-analysis.md)：bug issue 分析 job
 - [docs/qqbot.md](docs/qqbot.md)：QQ 机器人的凭据边界、命令与绑定配置
+- [docs/deploy.md](docs/deploy.md)：四容器隔离部署、出网白名单与运维

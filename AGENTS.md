@@ -33,15 +33,18 @@
 | `packages/agent/` | 模型池、工作区准备、只读工具与受控 bash、AI SDK 执行器 |
 | `packages/qqbot/` | QQ 协议适配层：网关连接、会话持久化、消息切分与序号、错误码记录 |
 | `apps/qqbot/` | QQ 机器人常驻进程：命令路由、群会话、RPC 客户端与优雅停机 |
+| `apps/agent-svc/` | 内部分析服务：任务队列、模型池调度、结构化草稿（`node:http`） |
+| `apps/github-svc/` | 内部写回服务：白名单、凭据扫描、标签清洗、幂等建 Issue（`node:http`） |
 | `config/` | 仓库白名单、预算与模型池；`repos.json` 是授权的事实来源 |
 | `prompts/` | `common/` 通用规则，`repos/<profile>/` 仓库覆盖 |
 | `templates/` | 评论与调用方 workflow 模板 |
-| `deploy/` | 出网白名单与容器编排 |
-| `docs/` | 授权、调度与 job 的设计文档；写法受 `docs/AGENTS.md` 约束 |
+| `deploy/` | CI 与 Docker 两份出网白名单、Dockerfile、compose 编排与配置示例 |
+| `docs/` | 授权、调度、QQ 机器人与部署的设计文档；写法受 `docs/AGENTS.md` 约束 |
 
 workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod`、AI SDK（`ai`、
 `@ai-sdk/openai-compatible`）与 QQ SDK（`@tencent-connect/qqbot-nodejs`，只在
-`packages/qqbot`）。测试与源码同包，用 vitest，不单独建 `tests/` 目录。
+`packages/qqbot`）。两个内部 HTTP 服务只用 `node:http`，不引 Web 框架。
+测试与源码同包，用 vitest，不单独建 `tests/` 目录。
 
 ## 3. 安全不变量
 
@@ -64,6 +67,11 @@ workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod`、AI SDK
     `@gt6ce/github`，也不持有 LLM key 与 GitHub App 凭据。它只通过两个带独立
     `RPC_TOKEN` 的 REST 客户端访问后端服务，依赖方向由 `package.json` 与 tsconfig 的
     `paths` 强制，不是约定。
+11. `apps/agent-svc` 只依赖 `@gt6ce/agent` 与 `@gt6ce/shared`，不持有任何 GitHub 凭据；
+    `apps/github-svc` 只依赖 `@gt6ce/github` 与 `@gt6ce/shared`，不持有任何模型 key。
+    两者互不引用，也不引用 `@gt6ce/qqbot`。
+12. 内部服务的跨服务认证只接受 `Authorization: Bearer`，比对必须先哈希再
+    `timingSafeEqual`；`/healthz` 是唯一的免鉴权路由，且只返回 `{ ok: true }`。
 
 `analysis` 内的 agent 通过工具读取工作区，没有审批环节。它的隔离来自 job 边界——
 没有写 token、没有 App 私钥——以及 Zero-Secret bash 与出网白名单，**不是**来自沙箱或审批。

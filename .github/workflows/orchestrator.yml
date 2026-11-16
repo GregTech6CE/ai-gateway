@@ -101,6 +101,9 @@ jobs:
       issue_title: ${{ steps.gate.outputs.issue_title }}
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Download CI bundle
         uses: actions/download-artifact@v4
         with:
@@ -155,6 +158,9 @@ jobs:
             api.mistral.ai:443
             api.cline.bot:443
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Download CI bundle
         uses: actions/download-artifact@v4
         with:
@@ -288,6 +294,9 @@ jobs:
     environment: writer
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
       - name: Download CI bundle
         uses: actions/download-artifact@v4
         with:
