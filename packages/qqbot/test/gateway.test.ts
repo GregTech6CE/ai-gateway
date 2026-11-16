@@ -1,3 +1,7 @@
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import type { QQBotInboundMessage } from '@tencent-connect/qqbot-nodejs';
 import { createLogger } from '@gt6ce/shared';
 import { describe, expect, it } from 'vitest';
@@ -5,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { GatewaySendError } from '../src/errors.ts';
 import {
   QQBotGateway,
+  SdkTransport,
   isFatalCloseCode,
   normalizeInboundMessage,
 } from '../src/gateway.ts';
@@ -282,6 +287,20 @@ describe('QQBotGateway 生命周期', () => {
     expect(seen).toEqual(['in-8']);
     expect(errors.map((error) => error.message)).toEqual(['boom']);
     expect(lines.some((line) => line.includes('消息处理器抛错'))).toBe(true);
+  });
+});
+
+describe('SdkTransport', () => {
+  it('传入 stateDir 时构造成功，flush 不抛错（FileKVStore + kvSessionPersistence）', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'qqbot-state-'));
+    try {
+      const transport = new SdkTransport({ ...CONFIG, stateDir: dir }, loggerLines().logger);
+      expect(() => transport.flush()).not.toThrow();
+      // 构造期间不发起网络请求，也不读环境变量：凭据全部来自入参。
+      expect(transport).toBeInstanceOf(SdkTransport);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 
