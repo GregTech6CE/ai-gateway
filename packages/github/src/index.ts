@@ -6,6 +6,7 @@
  * 本包不在导入时读环境变量，也不建立连接。
  */
 export * from './answer.ts';
+export * from './attachments.ts';
 export * from './bot-tag.ts';
 export * from './client.ts';
 export * from './labels.ts';
