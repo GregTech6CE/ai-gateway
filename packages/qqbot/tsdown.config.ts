@@ -13,6 +13,6 @@ export default defineConfig({
   sourcemap: false,
   dts: { sourcemap: false },
   clean: true,
-  deps: { alwaysBundle: [/^@gt6ce\//, 'zod'] },
+  deps: { alwaysBundle: [/^@gt6ce\//, /^zod(\/|$)/] },
   outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
 });

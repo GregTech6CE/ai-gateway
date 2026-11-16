@@ -1,8 +1,10 @@
 import { defineConfig } from 'tsdown';
 
 /**
- * 单文件产物：把源码与工作区依赖全部内联，运行期只需要 node。
- * 占位包也走同一条构建链，避免 Step 2 接入时再改工程配置。
+ * 单文件产物：把源码、工作区依赖、AI SDK 与 zod 全部内联，运行期只需要 node。
+ * 产物是 dist/index.js + index.d.ts —— package.json 的 main/types 都指向 dist，
+ * 所以声明文件必须一起产出。不生成 sourcemap：产物进 release 与镜像，
+ * map 会让体积翻倍，而排查靠的是日志与结构化结果，不是行号。
  */
 export default defineConfig({
   entry: ['src/index.ts'],
@@ -13,6 +15,8 @@ export default defineConfig({
   sourcemap: false,
   dts: { sourcemap: false },
   clean: true,
-  deps: { alwaysBundle: [/^@gt6ce\//, 'zod'] },
+  deps: { alwaysBundle: [/^@gt6ce\//, /^@ai-sdk\//, 'ai', /^zod(\/|$)/] },
+  // AI SDK 内部有动态 import；禁用分包，保证 dist 是单文件，artifact 不会漏 chunk。
+  outputOptions: { codeSplitting: false },
   outExtensions: () => ({ js: '.js', dts: '.d.ts' }),
 });

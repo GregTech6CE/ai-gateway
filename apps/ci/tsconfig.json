@@ -4,6 +4,9 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
+      "@gt6ce/agent": [
+        "../../packages/agent/src/index.ts"
+      ],
       "@gt6ce/github": [
         "../../packages/github/src/index.ts"
       ],
@@ -15,5 +18,5 @@
       "node"
     ]
   },
-  "include": ["src/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts"]
 }
