@@ -1,0 +1,20 @@
+# Docker 专用出网白名单。
+#
+# 这份文件同时是 Tinyproxy 的 Filter 文件：每行一个 POSIX 扩展正则，
+# `#` 开头为注释。`deploy/tinyproxy/tinyproxy.conf` 以 `FilterDefaultDeny Yes`
+# 加载它，因此**只有这里列出的域名**可被容器访问。
+#
+# 与 `deploy/egress-allowlist.txt` 的区别：那份给 CI 的 harden-runner 用，
+# 含 GitHub 源码下载域名；这份只覆盖常驻服务实际需要的 API 出口。
+# 改这里不需要同步 workflow。
+
+# QQ 开放平台：HTTP API 与 WebSocket 网关
+^api\.sgroup\.qq\.com$
+^bots\.qq\.com$
+
+# GitHub REST API：仅写回服务使用
+^api\.github\.com$
+
+# 模型 API：agent-svc 的两个 endpoint
+^api\.mistral\.ai$
+^api\.cline\.bot$

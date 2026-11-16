@@ -1,0 +1,22 @@
+{
+  "appId": "<QQ_APP_ID>",
+  "appSecret": "<QQ_APP_SECRET>",
+  "sandbox": false,
+  "stateDir": "/app/state",
+  "agentEndpoint": "http://agent-svc:8080",
+  "agentToken": "<RPC_TOKEN_AGENT>",
+  "githubWriterEndpoint": "http://github-writer:8080",
+  "githubWriterToken": "<RPC_TOKEN_GITHUB_WRITER>",
+  "bindings": [
+    {
+      "scope": "group:<GROUP_OPENID>",
+      "repo": "GregTech6CE/GregTech6",
+      "maintainers": ["<MAINTAINER_OPENID>"],
+      "allowedCommands": ["help", "issue"],
+      "attachBotStop": true
+    }
+  ],
+  "pollIntervalMs": 2000,
+  "taskTimeoutMs": 180000,
+  "sessionTtlMs": 1800000
+}

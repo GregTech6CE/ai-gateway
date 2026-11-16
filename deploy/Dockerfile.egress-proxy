@@ -1,0 +1,16 @@
+# Tinyproxy 出网代理。
+#
+# 构建上下文是仓库根目录：
+#   docker build -f deploy/Dockerfile.egress-proxy -t gt6ce/egress-proxy .
+FROM alpine:3.20
+
+RUN apk add --no-cache tinyproxy
+
+COPY deploy/tinyproxy/tinyproxy.conf /etc/tinyproxy/tinyproxy.conf
+COPY deploy/egress-allowlist-docker.txt /etc/tinyproxy/filter
+
+# 非 root：8888 是高位端口，pid/日志写 /tmp（compose 提供 tmpfs）。
+USER 10002:10002
+EXPOSE 8888
+
+ENTRYPOINT ["tinyproxy", "-d", "-c", "/etc/tinyproxy/tinyproxy.conf"]

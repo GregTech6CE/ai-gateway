@@ -1,0 +1,158 @@
+# 四容器隔离编排。
+#
+# 网络模型：
+#   internal-net（internal: true，无公网网关）
+#     ├── qqbot           只连 QQ、只调内网 RPC
+#     ├── agent-svc       只有模型 key，出网只能走代理
+#     ├── github-writer   只有 GitHub 凭据，出网只能走代理
+#     └── egress-proxy    唯一同时接入 internal-net 与 egress-net 的容器
+#   egress-net（普通 bridge）
+#     └── egress-proxy    按 egress-allowlist-docker.txt 放行域名
+#
+# 三个业务容器都不发布宿主端口；调试用 `docker compose exec`。
+#
+# 使用前：
+#   1. rush rebuild 生成 dist；
+#   2. cp deploy/config/*.example.json deploy/config/<name>.json 并填值；
+#   3. 在 deploy/secrets/ 下创建三份 token 文件（见 docs/deploy.md）。
+
+name: gt6ce-gateway
+
+x-hardening: &hardening
+  read_only: true
+  cap_drop: [ALL]
+  security_opt:
+    - no-new-privileges:true
+  tmpfs:
+    - /tmp
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+x-proxy-env: &proxy-env
+  HTTP_PROXY: http://egress-proxy:8888
+  HTTPS_PROXY: http://egress-proxy:8888
+  NODE_USE_ENV_PROXY: "1"
+  NO_PROXY: localhost,127.0.0.1,agent-svc,github-writer
+
+x-node-healthcheck: &node-healthcheck
+  test:
+    - CMD
+    - node
+    - -e
+    - "fetch('http://127.0.0.1:8080/healthz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+  interval: 10s
+  timeout: 3s
+  retries: 5
+  start_period: 15s
+
+networks:
+  internal-net:
+    internal: true
+  egress-net: {}
+
+volumes:
+  qqbot-state: {}
+
+secrets:
+  rpc-token-agent:
+    file: ./secrets/rpc-token-agent
+  rpc-token-github:
+    file: ./secrets/rpc-token-github
+  github-token:
+    file: ./secrets/github-token
+
+services:
+  egress-proxy:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.egress-proxy
+    image: gt6ce/egress-proxy:local
+    restart: unless-stopped
+    networks:
+      - internal-net
+      - egress-net
+    user: "10002:10002"
+    <<: *hardening
+    healthcheck:
+      test: ["CMD-SHELL", "nc -z 127.0.0.1 8888 || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+      start_period: 5s
+
+  qqbot:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.qqbot
+    image: gt6ce/qqbot:local
+    restart: unless-stopped
+    networks:
+      - internal-net
+    environment:
+      <<: *proxy-env
+      QQBOT_CONFIG: /app/config/qqbot.json
+      QQBOT_LOG_LEVEL: info
+    volumes:
+      - ./config/qqbot.json:/app/config/qqbot.json:ro
+      - qqbot-state:/app/state
+    user: "10001:10001"
+    <<: *hardening
+    depends_on:
+      agent-svc:
+        condition: service_healthy
+      github-writer:
+        condition: service_healthy
+    stop_grace_period: 20s
+
+  agent-svc:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.agent-svc
+    image: gt6ce/agent-svc:local
+    restart: unless-stopped
+    networks:
+      - internal-net
+    environment:
+      <<: *proxy-env
+      AGENT_SVC_CONFIG: /app/config/agent-svc.json
+      AGENT_SVC_LOG_LEVEL: info
+      MODEL_KEY_MISTRAL: ${MODEL_KEY_MISTRAL:?请设置 MODEL_KEY_MISTRAL}
+      MODEL_KEY_CLINEPASS: ${MODEL_KEY_CLINEPASS:?请设置 MODEL_KEY_CLINEPASS}
+    volumes:
+      - ./config/agent-svc.json:/app/config/agent-svc.json:ro
+      - ../config:/app/repo-config:ro
+      - ../prompts:/app/prompts:ro
+    secrets:
+      - rpc-token-agent
+    user: "10001:10001"
+    <<: *hardening
+    healthcheck: *node-healthcheck
+    stop_grace_period: 20s
+
+  github-writer:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.github-svc
+    image: gt6ce/github-svc:local
+    restart: unless-stopped
+    networks:
+      - internal-net
+    environment:
+      <<: *proxy-env
+      GITHUB_SVC_CONFIG: /app/config/github-svc.json
+      GITHUB_SVC_LOG_LEVEL: info
+    volumes:
+      - ./config/github-svc.json:/app/config/github-svc.json:ro
+      - ../config:/app/repo-config:ro
+      # 使用 GitHub App 认证时取消注释，并在 github-svc.json 里改用 app 模式：
+      # - ./secrets/github-app.pem:/run/secrets/github-app.pem:ro
+    secrets:
+      - rpc-token-github
+      - github-token
+    user: "10001:10001"
+    <<: *hardening
+    healthcheck: *node-healthcheck
+    stop_grace_period: 10s

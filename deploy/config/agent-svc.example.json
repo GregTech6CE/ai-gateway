@@ -1,0 +1,28 @@
+{
+  "server": {
+    "host": "0.0.0.0",
+    "port": 8080
+  },
+  "auth": {
+    "token": {
+      "file": "/run/secrets/rpc-token-agent"
+    }
+  },
+  "paths": {
+    "config_dir": "/app/repo-config",
+    "prompts_dir": "/app/prompts"
+  },
+  "model": {
+    "pool": "shared",
+    "role": "analysis",
+    "temperature": 0.2,
+    "max_output_tokens": 4000,
+    "timeout_ms": 120000
+  },
+  "tasks": {
+    "concurrency": 2,
+    "ttl_ms": 3600000,
+    "max_tasks": 200,
+    "timeout_ms": 180000
+  }
+}

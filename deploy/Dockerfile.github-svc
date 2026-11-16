@@ -1,0 +1,19 @@
+# GitHub 写回服务运行镜像。
+#
+#   docker build -f deploy/Dockerfile.github-svc -t gt6ce/github-svc .
+#
+# 镜像内没有 LLM SDK、没有模型 key 的读取逻辑：dist 只内联
+# @gt6ce/github、@gt6ce/shared 与 zod。
+FROM node:22-slim
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+COPY apps/github-svc/dist ./dist
+COPY apps/github-svc/package.json ./package.json
+
+USER 10001:10001
+STOPSIGNAL SIGTERM
+EXPOSE 8080
+
+CMD ["node", "dist/main.js"]
