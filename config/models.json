@@ -8,7 +8,6 @@
           "base_url": "https://api.mistral.ai/v1",
           "api_key_env": "MODEL_KEY_MISTRAL",
           "model": "deepseek-v4-1-flash-1017",
-          "wire_api": "responses",
           "enabled": true
         },
         {
@@ -17,8 +16,6 @@
           "base_url": "https://api.cline.bot/api/v1",
           "api_key_env": "MODEL_KEY_CLINEPASS",
           "model": "cline-pass/deepseek-v4.1-flash-1017",
-          "wire_api": "chat",
-          "codex_bridge": true,
           "headers": {
             "X-Response-Format": "openai"
           },

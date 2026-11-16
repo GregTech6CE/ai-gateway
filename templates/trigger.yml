@@ -2,9 +2,11 @@ name: gt6ce control
 
 # A（issue 仓库）的 .github/workflows/ai-analysis.yml 模板。
 # 与 issue 仓库中的实际文件保持同步。
-# A 只做 installation check、占位评论、dispatch；最终写入在 B 的 finalize job。
-# A（issue 仓库）只负责：installation check、占位评论、dispatch。
-# 最终写入由 B 侧独立的 finalize job 完成；A 不再轮询、不下载 artifact、不渲染。
+# A 只负责：installation check、占位评论、dispatch。最终写入由 B 侧独立的 finalize job 完成；
+# A 不轮询、不下载 artifact、不渲染。
+#
+# 这里的 control CLI 来自现场克隆的 ai-gateway，因此需要在 A 内构建一次
+# `apps/ci/dist`。构建只跑 pnpm 安装与 tsdown，不接触任何模型 key。
 
 on:
   issues:
@@ -43,7 +45,7 @@ jobs:
          github.event.comment.author_association == 'MEMBER' ||
          github.event.comment.author_association == 'COLLABORATOR')))
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - name: Clone execution repo
         run: |
@@ -52,6 +54,17 @@ jobs:
           git -C .bot remote add origin https://github.com/GregTech6CE/ai-gateway.git
           git -C .bot fetch -q --depth 1 origin master
           git -C .bot checkout -q FETCH_HEAD
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build control CLI
+        working-directory: .bot
+        run: |
+          set -euo pipefail
+          node common/scripts/install-run-rush.js install
+          node common/scripts/install-run-rush.js build --to @gt6ce/ci
 
       - name: App token (issues:write on this repository)
         id: app_rw
@@ -74,6 +87,7 @@ jobs:
       - name: Start control
         id: start
         env:
+          CI_ROOT: .bot
           REPO: ${{ github.repository }}
           ISSUE: ${{ github.event.issue.number || inputs.issue }}
           EVENT: ${{ github.event_name == 'workflow_dispatch' && 'issues' || github.event_name }}
@@ -85,4 +99,4 @@ jobs:
           B_REPO: GregTech6CE/ai-gateway
           GH_RW_TOKEN: ${{ steps.app_rw.outputs.token }}
           B_PAT: ${{ steps.app_dispatch.outputs.token }}
-        run: python .bot/scripts/control.py start
+        run: node .bot/apps/ci/dist/jobs/control.js start

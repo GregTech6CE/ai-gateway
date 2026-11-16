@@ -65,10 +65,12 @@ variable token 不收敛到 `issues: write`：现有签发 action 不支持只�
 `analysis` 及其中的 agent 步骤：
 
 - 没有 App 私钥，没有 App token，没有 `issues: write`；
-- 环境里的 `GITHUB_TOKEN`、`SELF_TOKEN` 被移除，`GH_TOKEN` 被清空：agent 不持有任何
-  GitHub token，对 issue 的读取由 supervisor 的匿名请求完成；
-- 进程环境同时含有两个 endpoint 的模型 key（切换候选时不需要重新注入），Codex 通过
-  `LLM_API_KEY` 只使用当前 endpoint 的那一个。因此"agent 只看得到一把 key"不成立。
+- workflow 只注入 `MODEL_KEY_*`：没有 `GITHUB_TOKEN`、没有 `GH_TOKEN`，agent 不持有任何
+  GitHub token；issue 的读取发生在只读的 `gate` job，模型只看到 `inputs/` 里的快照；
+- 进程环境同时含有两个 endpoint 的模型 key（切换候选时不需要重新注入），执行器按当前
+  endpoint 的 `api_key_env` 取用其中一把。因此"agent 只看得到一把 key"不成立；
+- `run_bash` 每次启动子进程都重建 `env`，只保留 `PATH`/`LANG`/`HOME`/`HTTP(S)_PROXY`，
+  模型 key 与任何 GitHub token 都不会进入子进程。
 
 ## 凭据作用域
 
@@ -92,8 +94,8 @@ variable token 不收敛到 `issues: write`：现有签发 action 不支持只�
 2. App 私钥的持有者可以冒充 bot 发布评论与触发本仓库。这是已知的残余身份风险；它不
    扩大模型 key 的可达范围。
 3. `analysis` 的模型 key 确实存在于 agent 进程环境内，且两个 endpoint 的 key 同时可见。
-   防线是输出扫描、provider 额度与轮换，而不是沙箱——agent 以 `danger-full-access` 运行
-   且无人工审批。
+   防线是输出扫描、`run_bash` 的 Zero-Secret 环境、出网白名单与轮换，而不是沙箱——
+   agent 直接在宿主 runner 上执行，没有人工审批。
 4. 本仓库公开：日志、输入与 artifact 均可被读到。脱敏是尽力而为，因此私有 issue 仓库
    必须由私有实例处理。
-5. 配额限制的是运行次数，不是单次成本。单次运行以墙钟时间与 endpoint 冷却为刹车。
+5. 单次运行以墙钟时间与 endpoint 冷却为刹车，不再有每 issue / 每仓库 / 全局的运行配额。

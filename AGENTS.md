@@ -27,15 +27,19 @@
 | 路径 | 职责 |
 |---|---|
 | `.github/workflows/` | 唯一入口与 job 编排，权限与凭据边界都在这里 |
-| `scripts/` | 确定性逻辑：校验、快照、调度、运行、渲染、扫描、写回 |
+| `apps/ci/` | 各阶段 CLI：`gate`、`prefetch`、`manifest`、`analysis`、`render`、`write-back`、`control`、`update-health` |
+| `packages/shared/` | Zod 配置与答案契约、凭据扫描、结构化日志 |
+| `packages/github/` | GitHub REST 客户端、`bot:v1` 标记协议、六轴标签、渲染与写回 |
+| `packages/agent/` | 模型池、工作区准备、只读工具与受控 bash、AI SDK 执行器 |
+| `packages/qqbot/` | QQ 协议适配层（占位，见 Step 3） |
 | `config/` | 仓库白名单、预算与模型池；`repos.json` 是授权的事实来源 |
 | `prompts/` | `common/` 通用规则，`repos/<profile>/` 仓库覆盖 |
 | `templates/` | 评论与调用方 workflow 模板 |
-| `schemas/` | 结构化产物的契约 |
+| `deploy/` | 出网白名单与容器编排 |
 | `docs/` | 授权、调度与 job 的设计文档；写法受 `docs/AGENTS.md` 约束 |
-| `tests/` | 标准库 `unittest` 用例 |
 
-脚本只依赖 Python 标准库，不引入运行时包依赖。
+workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod` 与 AI SDK（`ai`、
+`@ai-sdk/openai-compatible`）。测试与源码同包，用 vitest，不单独建 `tests/` 目录。
 
 ## 3. 安全不变量
 
@@ -50,10 +54,14 @@
 5. 未知仓库、配置缺失或配置非法一律 fail-closed，不得退化为"默认放行"。
 6. 触发参数与 issue 文本只当数据：不拼接进 shell 语句，不参与路径构造，不当作指令。
 7. 写回前必须经过凭据扫描；命中即阻断发布，只回一条拦截说明。
+8. `run_bash` 每次启动子进程都重建 `env`，只保留 `PATH`/`LANG`/`HOME`/`HTTP(S)_PROXY`；
+   `MODEL_KEY_*` 与其他凭据不得进入子进程。只读工具的路径必须限制在工作区内。
+9. `analysis` job 的出网域名由 `deploy/egress-allowlist.txt` 与 harden-runner 的
+   `allowed-endpoints` 共同约束，两处必须同步。
 
-`analysis` 内的 agent 以 `danger-full-access` 运行，没有人工审批。它的隔离来自 job
-边界——没有写 token、没有 App 私钥——**不是**来自沙箱或审批。不要用"沙箱会拦住"作为
-安全论证。
+`analysis` 内的 agent 通过工具读取工作区，没有审批环节。它的隔离来自 job 边界——
+没有写 token、没有 App 私钥——以及 Zero-Secret bash 与出网白名单，**不是**来自沙箱或审批。
+不要用"沙箱会拦住"作为安全论证。
 
 ## 4. Workflow 修改规则
 
@@ -82,7 +90,8 @@
 | 脚本注入 | `${{ }}` 直接嵌入 `run:` | 触发器只传标量，脚本内自行校验；不可信文本走 `env:` |
 | 凭据外泄 | 评论、日志、artifact | 三层就地脱敏：日志行写出前替换命中片段；`analysis` 递归扫描 `outputs/` 并改写文件（私钥块整体替换，超过上限只保留前段）；`finalize` 再扫渲染结果。扫描失败则关闭 artifact 上传闸门，命中另记 `secret_scan` 并阻断发布 |
 | 越权触发 | 伪造仓库名、伪造 bot 评论、非维护者 @ | 仓库键白名单 fail-closed；评论作者协会校验；按仓库匹配 bot 身份 |
-| 重复触发与配额耗尽 | 高频评论、重复 @ | 隐藏标记幂等 + 每 issue / 每仓库 / 全局三级配额 |
+| 重复触发 | 高频评论、重复 @ | `bot:v1:` 隐藏标记幂等（stop / pending / done / failed）；被动触发另有 7 天超期兜底；显式 `force` 才放行 |
+| 状态伪造 | 手工复制隐藏标记 | 标记只用于被动触发的幂等判定，不作为授权依据；授权仍看仓库配置与作者协会 |
 | 供应链投毒 | 第三方 action、全局 npm 包 | 版本固定；权限最小；只在必要时引入 |
 | 附件炸弹 | 超大附件、zip 路径穿越 | 单文件与总量上限、条目绝对路径与 `..` 校验、文本后缀才进摘要 |
 | 可见性错配 | 公开仓处理私有 issue | `gate` 内的目标仓库可见性检查，不满足即跳过 |
@@ -98,7 +107,10 @@
 
 ## 7. 变更与验证
 
-- 本地校验：`python -m unittest discover -s tests -v`。
+- 本地校验：
+  `node common/scripts/install-run-rush.js typecheck`、
+  `node common/scripts/install-run-rush.js test`、
+  `node common/scripts/install-run-rush.js rebuild`。三条都要通过。
 - 文本文件一律 LF，由 `.gitattributes` 约束；编辑器与脚本不要写出 CRLF，否则会产生整
   文件差异并掩盖真实改动。新增二进制或凭据格式要在 `.gitattributes` 里显式排除。
 - 只做只读查询与本地运行；提交、推送、发布、修改 environment 与 secret 需要明确授权。

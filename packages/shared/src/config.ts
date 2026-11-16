@@ -147,8 +147,6 @@ export const ModelEndpointSchema = z
     base_url: z.string().url(),
     api_key_env: z.string().min(1),
     model: z.string().min(1),
-    wire_api: z.enum(['responses', 'chat']).default('chat'),
-    codex_bridge: z.boolean().default(false),
     headers: z.record(z.string(), z.string()).default({}),
     enabled: z.boolean().default(true),
   })

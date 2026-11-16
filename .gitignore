@@ -1,5 +1,4 @@
 .cache/
-.codex/
 .env
 .env.*
 *.pem
@@ -11,8 +10,6 @@ id_rsa*
 node_modules/
 inputs/
 outputs/
-__pycache__/
-*.pyc
 
 # Rush / pnpm
 common/temp/

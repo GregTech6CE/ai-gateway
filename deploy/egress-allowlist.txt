@@ -1,0 +1,19 @@
+# 出网白名单：CI 的 harden-runner 与 Docker 侧的 egress-proxy 共用这一份清单。
+# 只列域名，不带 scheme 与路径；端口由使用方统一按 443 处理。
+#
+# 增删任何一行都要同步
+# `.github/workflows/orchestrator.yml` 里 analysis job 的 allowed-endpoints，
+# 否则 CI 与容器侧的边界会漂移。
+
+# GitHub：代码克隆、artifact 下载与 API
+api.github.com
+github.com
+codeload.github.com
+objects.githubusercontent.com
+*.githubusercontent.com
+*.actions.githubusercontent.com
+*.blob.core.windows.net
+
+# 模型池（config/models.json 里的 base_url 主机名）
+api.mistral.ai
+api.cline.bot

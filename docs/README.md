@@ -11,7 +11,6 @@
 | [auth.md](auth.md) | 谁可以触发、触发被如何校验、本仓库可以写什么 |
 | [dispatch.md](dispatch.md) | 调用方与本仓库之间的参数契约、run 语义与失败判定 |
 | [jobs/bug-issue-analysis.md](jobs/bug-issue-analysis.md) | 一次 bug issue 分析经过哪些 job、产出什么、如何中止 |
-| [knowledge-base/codex.md](knowledge-base/codex.md) | Codex CLI 的调用形态、事件流、会话续接与配置覆盖 |
 
 根 `AGENTS.md` 是改动约束与安全规则的入口，本目录的 `AGENTS.md` 只管文档写法。
 
@@ -19,9 +18,6 @@
 
 一份设计事实只写在一处：授权写在 `auth.md`，参数与 run 语义写在 `dispatch.md`，
 job 内部步骤写在各 job 文档。其余文档只引用，不复述。
-
-`knowledge-base/` 记录外部工具自身的事实（版本、命令、协议），不描述本仓库设计；引用它
-的文档应给出结论，而不是让读者自己去翻。
 
 写入前确认：这条信息能否只凭本公开仓库核对。不能核对的，用名称或机制表述，或删除。
 
@@ -51,12 +47,11 @@ job 内部步骤写在各 job 文档。其余文档只引用，不复述。
 新增模型 endpoint：
 
 1. 在 `config/models.json` 的 `endpoints` 增加条目，写清 `base_url`、`api_key_env`、
-   `model` 与 `wire_api`。
+   `model` 与 `headers`。只支持 OpenAI Chat Completions 兼容端点。
 2. 在 `roles.analysis` 增加绑定，给出 `context`、`effort` 与 `weight`；`weight` 决定相对
    调用频次（之比即长期选择次数之比），缺省为 1；待机时长按一个月封顶。
 3. 在 `llm` environment 补齐同名 secret；缺 key 时该 endpoint 被记为失败并跳过。
-4. 若 endpoint 只提供 `chat/completions`，加 `codex_bridge: true`；supervisor 会为它启动
-   `scripts/responses_bridge.py`，Codex 仍按 `wire_api="responses"` 连接本地桥，`headers`
-   由桥透传给上游。桥的字段覆盖范围见 `jobs/bug-issue-analysis.md` 的「执行流程」。
+4. 如果新端点不在 `deploy/egress-allowlist.txt` 里，同步添加域名，并更新
+   `.github/workflows/orchestrator.yml` 的 `allowed-endpoints`。
 
 两者的共同要求：不要为了接入方便放宽任何 fail-closed 分支，不要在配置里写凭据值。

@@ -13,13 +13,16 @@
 ## 分析流程
 
 1. 调用方以 `workflow_dispatch` 提交 issue 仓库、编号与事件类型。
-2. `gate`：只读校验仓库配置、issue 状态、触发者权限、幂等标记与配额，通过后生成快照。
-3. `analysis`：按 issue 报告的版本检出代码、预取附件，再做相关性分类，然后由固定版本
-   的 Codex CLI 在 supervisor 下产出结构化结论。
-4. `finalize`：确定性渲染、凭据扫描，写回占位评论与标签，并更新模型健康状态。
+2. `build`：安装依赖并把 `apps/ci` 打成 artifact，后续 job 只下载这一份产物。
+3. `gate`：只读校验仓库配置、issue 状态、触发者权限、`bot:v1:` 标记与 7 天超期，通过后
+   生成快照；显式 `force` 无视标记与时间窗口。
+4. `analysis`：按 issue 报告的版本检出代码、预取附件，再做相关性分类，然后由
+   `@gt6ce/agent`（Vercel AI SDK + 只读工具 + 受控 bash）产出结构化结论。
+5. `finalize`：确定性渲染、凭据扫描，写回占位评论与标签，并更新模型健康状态。
 
 `finalize` 在 `analysis` 失败、超时或取消时仍会运行，负责回写失败结论。agent 步骤
-不持有写权限与 App 凭据。
+不持有写权限与 App 凭据；`run_bash` 只保留 `PATH`/`LANG`/`HOME`/`HTTP(S)_PROXY`，
+模型 key 不会进入子进程。
 
 ## 密钥
 

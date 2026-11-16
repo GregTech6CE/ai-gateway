@@ -2,8 +2,7 @@
 
 调用方是 issue 所在仓库的 workflow，本仓库是被调用方。两者之间只有一次
 `workflow_dispatch`，没有回调、没有共享文件系统。设计路径不做轮询：结论由本仓库的
-`finalize` 直接写回；`scripts/control.py` 的 `finish` 子命令保留轮询能力，但它是兼容
-路径，见文末。
+`finalize` 直接写回；`apps/ci` 的 `control finish` 保留轮询能力，但它是兼容路径，见文末。
 
 ## 参数契约
 
@@ -17,6 +16,7 @@
 | `comment_id` | 触发评论 id | `issue_comment` 时必填，`gate` 用它校验评论归属与作者 |
 | `placeholder_comment_id` | 调用方创建的占位评论 id | 供 `finalize` 原地 PATCH |
 | `request_id` | 调用方 run id | 用于把"本次请求"从历史标记中排除 |
+| `force` | 主动强制 | `true` 时 `gate` 无视 `bot:v1:` 标记与 7 天窗口；仅由维护者的显式操作置位 |
 | `issue_title` | 仅用于 run 名称 | 不参与判定；不得用于构造路径或命令 |
 | `dry_run` | `true` 时抑制评论与标签写回 | `finalize` 仍会渲染并更新 `MODEL_HEALTH` |
 
@@ -84,6 +84,6 @@ dispatch，避免 issue 持续编辑把请求无限期挂起。
 
 dispatch 成功后，调用方只更新自己创建的占位评论链接，写回层面的职责到此结束：结论只能
 由本仓库的 `finalize` 发布。
-`scripts/control.py` 保留两个未在触发模板中启用的子命令：`finish` 轮询 run、下载 artifact、
-在结果缺失时写 fallback `result.json`；`cleanup` 删除占位评论。当前模板只调用 `start`，
-这两个子命令是兼容路径，启用它们不会获得写回权。
+`apps/ci` 的 `control` job 保留两个未在触发模板中启用的子命令：`finish` 轮询 run、下载
+artifact、在结果缺失时写 fallback `result.json`；`cleanup` 删除占位评论。当前模板只调用
+`start`，这两个子命令是兼容路径，启用它们不会获得写回权。
