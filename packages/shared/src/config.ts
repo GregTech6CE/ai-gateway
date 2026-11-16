@@ -222,12 +222,10 @@ export const RelevanceBudgetSchema = z
   })
   .strict();
 
-/** L2 分析的时间与停滞约束；不再有轮次与 token 上限。 */
+/** L2 分析只有墙钟上限：轮次、token 配额与停滞检测都已移除。 */
 export const L2BudgetSchema = z
   .object({
     timeout_minutes: z.number().int().positive().default(60),
-    loop_repeat_threshold: z.number().int().positive().default(3),
-    stall_seconds: z.number().int().positive().default(180),
   })
   .strict();
 

@@ -7,9 +7,7 @@
       "max_output_tokens": 400
     },
     "l2": {
-      "timeout_minutes": 60,
-      "loop_repeat_threshold": 3,
-      "stall_seconds": 180
+      "timeout_minutes": 60
     },
     "artifacts": {
       "retention_days": 30,

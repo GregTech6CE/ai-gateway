@@ -17,7 +17,7 @@ const CONFIG_DIR = fileURLToPath(new URL('../../../config', import.meta.url));
 const MINIMAL_BUDGETS = {
   defaults: {
     relevance: { timeout_seconds: 90, max_output_tokens: 400 },
-    l2: { timeout_minutes: 60, loop_repeat_threshold: 3, stall_seconds: 180 },
+    l2: { timeout_minutes: 60 },
     artifacts: { retention_days: 30, max_attachment_bytes: 1, max_total_attachment_bytes: 2 },
     model_pool: {
       early_base_minutes: 15,
