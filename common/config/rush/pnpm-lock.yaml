@@ -38,13 +38,17 @@ importers:
         version: 5.1.0(@types/node@22.20.5)(vite@8.3.8(@types/node@22.20.5))
 
   ../../apps/qqbot:
-    devDependencies:
+    dependencies:
       '@gt6ce/qqbot':
         specifier: workspace:*
         version: link:../../packages/qqbot
       '@gt6ce/shared':
         specifier: workspace:*
         version: link:../../packages/shared
+      zod:
+        specifier: 3.25.76
+        version: 3.25.76
+    devDependencies:
       '@types/node':
         specifier: 22.20.5
         version: 22.20.5
@@ -54,6 +58,12 @@ importers:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
+      vite:
+        specifier: 8.3.8
+        version: 8.3.8(@types/node@22.20.5)
+      vitest:
+        specifier: 5.1.0
+        version: 5.1.0(@types/node@22.20.5)(vite@8.3.8(@types/node@22.20.5))
 
   ../../packages/agent:
     dependencies:
@@ -116,6 +126,9 @@ importers:
       '@gt6ce/shared':
         specifier: workspace:*
         version: link:../shared
+      '@tencent-connect/qqbot-nodejs':
+        specifier: 1.0.5
+        version: 1.0.5
     devDependencies:
       '@types/node':
         specifier: 22.20.5
@@ -126,6 +139,12 @@ importers:
       typescript:
         specifier: ~5.9.3
         version: 5.9.3
+      vite:
+        specifier: 8.3.8
+        version: 8.3.8(@types/node@22.20.5)
+      vitest:
+        specifier: 5.1.0
+        version: 5.1.0(@types/node@22.20.5)(vite@8.3.8(@types/node@22.20.5))
 
   ../../packages/shared:
     dependencies:
@@ -415,6 +434,18 @@ packages:
 
   '@standard-schema/spec@1.1.0':
     resolution: {integrity: sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==}
+
+  '@tencent-connect/qqbot-nodejs@1.0.5':
+    resolution: {integrity: sha512-OAPGoZTtG3soI79lGNQ4YqdAe9xy+lYatUfzZyBPmjaRjH0uLjFeImffMlGVSmhfaM/wJQSIA2g1uZv3eorTRg==}
+    engines: {node: '>=20'}
+    peerDependencies:
+      mpg123-decoder: ^1.0.3
+      silk-wasm: ^3.7.1
+    peerDependenciesMeta:
+      mpg123-decoder:
+        optional: true
+      silk-wasm:
+        optional: true
 
   '@tybys/wasm-util@0.10.4':
     resolution: {integrity: sha512-W3c4gRigFS0T/Ma4qIYF3GDAc5AQdHb1yL5znJT1Zv1YaD9Kitx656wBjvr19qbiosmZT8lWDM5BEMynUqX65A==}
@@ -860,6 +891,18 @@ packages:
     engines: {node: '>=20.11'}
     hasBin: true
 
+  ws@8.23.0:
+    resolution: {integrity: sha512-wCkmX8QMOrKjgO8HW2WyDbTSGeqkocxgDzS9iR79rEAexty6/2qzilx3Ag8Tqf9ykop3irLKle0MtVn5qjVnoQ==}
+    engines: {node: '>=10.0.0'}
+    peerDependencies:
+      bufferutil: ^4.0.1
+      utf-8-validate: '>=5.0.2'
+    peerDependenciesMeta:
+      bufferutil:
+        optional: true
+      utf-8-validate:
+        optional: true
+
   yuku@0.28.0:
     resolution: {integrity: sha512-vzuml0lBwq8gYUujhLZn9AZwgPG1yPF1081ceOkTnEIM9bwgRnFUGAW5x2hTLC+qGI/iqu9PLs5Jko6rUn7YDA==}
     engines: {node: '>=16.4.0'}
@@ -1046,6 +1089,13 @@ snapshots:
   '@rolldown/pluginutils@1.1.0': {}
 
   '@standard-schema/spec@1.1.0': {}
+
+  '@tencent-connect/qqbot-nodejs@1.0.5':
+    dependencies:
+      ws: 8.23.0
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   '@tybys/wasm-util@0.10.4':
     dependencies:
@@ -1362,6 +1412,8 @@ snapshots:
       - msw
 
   why-is-node-running@3.2.1: {}
+
+  ws@8.23.0: {}
 
   yuku@0.28.0:
     optionalDependencies:

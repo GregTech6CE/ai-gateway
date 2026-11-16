@@ -11,18 +11,22 @@
       "import": "./dist/index.js"
     }
   },
-  "description": "QQ 官方机器人协议适配层：网关连接、会话持久化、事件归一化。当前为占位包，实现见 Step 3。",
+  "description": "QQ 官方机器人协议适配层：网关连接、会话持久化、消息切分与防重、事件归一化与错误记录。",
   "scripts": {
     "build": "tsdown",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "dependencies": {
-    "@gt6ce/shared": "workspace:*"
+    "@gt6ce/shared": "workspace:*",
+    "@tencent-connect/qqbot-nodejs": "1.0.5"
   },
   "devDependencies": {
     "@types/node": "22.20.5",
     "tsdown": "0.23.7",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
   },
   "engines": {
     "node": ">=22.0.0"

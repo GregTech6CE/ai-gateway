@@ -4,7 +4,6 @@
   "private": true,
   "type": "module",
   "main": "./dist/index.js",
-  "types": "./dist/index.d.ts",
   "description": "QQ 机器人常驻网关：命令路由与转发，仅依赖 @gt6ce/qqbot 与 @gt6ce/shared。",
   "files": [
     "dist"
@@ -12,14 +11,21 @@
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node dist/main.js",
     "pack": "node ../../common/scripts/install-run-rush-pnpm.js pack --pack-destination ../../common/temp/artifacts"
   },
-  "devDependencies": {
+  "dependencies": {
     "@gt6ce/qqbot": "workspace:*",
     "@gt6ce/shared": "workspace:*",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
     "@types/node": "22.20.5",
     "tsdown": "0.23.7",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
   },
   "engines": {
     "node": ">=22.0.0"
