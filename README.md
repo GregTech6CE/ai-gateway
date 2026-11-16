@@ -24,6 +24,22 @@
 不持有写权限与 App 凭据；`run_bash` 只保留 `PATH`/`LANG`/`HOME`/`HTTP(S)_PROXY`，
 模型 key 不会进入子进程。
 
+## QQ 机器人
+
+`apps/qqbot` 是常驻进程，负责官方 WebSocket 接入、命令路由与建单。它只持有 QQ 凭据与
+两个 RPC token，**不含** LLM key 与 GitHub App 凭据：
+
+| 命令 | 行为 | 权限 |
+|---|---|---|
+| `/help` | 列出本会话启用的命令与示例 | 绑定会话即可 |
+| `/issue <标题>` | 收集版本/复现/期望，交 `agent-svc` 整理草稿，再由 `github-writer` 建 Issue | `maintainers` |
+
+`/issue` 缺字段时一次只问一个，引用机器人的提问回复即可补充；信息齐备后先回「已受理」，
+建单完成再把编号与链接发回群里。群绑定、维护者名单与 `bot:stop` 附加策略见
+[docs/qqbot.md](docs/qqbot.md)。
+
+启动：`QQBOT_CONFIG=/path/to/config.json node apps/qqbot/dist/main.js`。
+
 ## 密钥
 
 本仓库不含任何凭据。凭据只以 environment secret 与 repo variable 形式存在：
@@ -43,3 +59,4 @@
 - [docs/auth.md](docs/auth.md)：授权边界
 - [docs/dispatch.md](docs/dispatch.md)：调度契约
 - [docs/jobs/bug-issue-analysis.md](docs/jobs/bug-issue-analysis.md)：bug issue 分析 job
+- [docs/qqbot.md](docs/qqbot.md)：QQ 机器人的凭据边界、命令与绑定配置

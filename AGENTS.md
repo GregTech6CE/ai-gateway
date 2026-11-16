@@ -31,15 +31,17 @@
 | `packages/shared/` | Zod 配置与答案契约、凭据扫描、结构化日志 |
 | `packages/github/` | GitHub REST 客户端、`bot:v1` 标记协议、六轴标签、渲染与写回 |
 | `packages/agent/` | 模型池、工作区准备、只读工具与受控 bash、AI SDK 执行器 |
-| `packages/qqbot/` | QQ 协议适配层（占位，见 Step 3） |
+| `packages/qqbot/` | QQ 协议适配层：网关连接、会话持久化、消息切分与序号、错误码记录 |
+| `apps/qqbot/` | QQ 机器人常驻进程：命令路由、群会话、RPC 客户端与优雅停机 |
 | `config/` | 仓库白名单、预算与模型池；`repos.json` 是授权的事实来源 |
 | `prompts/` | `common/` 通用规则，`repos/<profile>/` 仓库覆盖 |
 | `templates/` | 评论与调用方 workflow 模板 |
 | `deploy/` | 出网白名单与容器编排 |
 | `docs/` | 授权、调度与 job 的设计文档；写法受 `docs/AGENTS.md` 约束 |
 
-workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod` 与 AI SDK（`ai`、
-`@ai-sdk/openai-compatible`）。测试与源码同包，用 vitest，不单独建 `tests/` 目录。
+workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod`、AI SDK（`ai`、
+`@ai-sdk/openai-compatible`）与 QQ SDK（`@tencent-connect/qqbot-nodejs`，只在
+`packages/qqbot`）。测试与源码同包，用 vitest，不单独建 `tests/` 目录。
 
 ## 3. 安全不变量
 
@@ -58,6 +60,10 @@ workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod` 与 AI S
    `MODEL_KEY_*` 与其他凭据不得进入子进程。只读工具的路径必须限制在工作区内。
 9. `analysis` job 的出网域名由 `deploy/egress-allowlist.txt` 与 harden-runner 的
    `allowed-endpoints` 共同约束，两处必须同步。
+10. `apps/qqbot` 只依赖 `@gt6ce/qqbot` 与 `@gt6ce/shared`：不得引入 `@gt6ce/agent`、
+    `@gt6ce/github`，也不持有 LLM key 与 GitHub App 凭据。它只通过两个带独立
+    `RPC_TOKEN` 的 REST 客户端访问后端服务，依赖方向由 `package.json` 与 tsconfig 的
+    `paths` 强制，不是约定。
 
 `analysis` 内的 agent 通过工具读取工作区，没有审批环节。它的隔离来自 job 边界——
 没有写 token、没有 App 私钥——以及 Zero-Secret bash 与出网白名单，**不是**来自沙箱或审批。

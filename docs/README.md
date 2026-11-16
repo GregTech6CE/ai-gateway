@@ -11,6 +11,7 @@
 | [auth.md](auth.md) | 谁可以触发、触发被如何校验、本仓库可以写什么 |
 | [dispatch.md](dispatch.md) | 调用方与本仓库之间的参数契约、run 语义与失败判定 |
 | [jobs/bug-issue-analysis.md](jobs/bug-issue-analysis.md) | 一次 bug issue 分析经过哪些 job、产出什么、如何中止 |
+| [qqbot.md](qqbot.md) | QQ 机器人的凭据边界、命令、绑定配置与协议适配要点 |
 
 根 `AGENTS.md` 是改动约束与安全规则的入口，本目录的 `AGENTS.md` 只管文档写法。
 
@@ -55,3 +56,11 @@ job 内部步骤写在各 job 文档。其余文档只引用，不复述。
    `.github/workflows/orchestrator.yml` 的 `allowed-endpoints`。
 
 两者的共同要求：不要为了接入方便放宽任何 fail-closed 分支，不要在配置里写凭据值。
+
+新增 QQ 群绑定：
+
+1. 在机器人配置的 `bindings` 增加 `scope`、`repo`、`maintainers`、`allowedCommands` 与
+   `attachBotStop`；`scope` 用 `group:<openid>` 最明确。
+2. 确认目标仓库在写回服务的白名单内，否则机器人能建草稿但写回会被拒绝。
+3. 机器人不读 issue 正文，也不持有模型 key；分析交给 `agent-svc`，写回交给
+   `github-writer`。给新群放行不需要扩大机器人的凭据范围。
