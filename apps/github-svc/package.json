@@ -1,0 +1,32 @@
+{
+  "name": "@gt6ce/github-svc",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/main.js",
+  "description": "内部 GitHub 写回服务：校验、扫描、清洗标签并创建 Issue。仅依赖 @gt6ce/github 与 @gt6ce/shared。",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsdown",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node dist/main.js"
+  },
+  "dependencies": {
+    "@gt6ce/github": "workspace:*",
+    "@gt6ce/shared": "workspace:*",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "22.20.5",
+    "tsdown": "0.23.7",
+    "typescript": "~5.9.3",
+    "vite": "8.3.8",
+    "vitest": "5.1.0"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  }
+}

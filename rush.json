@@ -50,6 +50,16 @@
       "packageName": "@gt6ce/qqbot-app",
       "projectFolder": "apps/qqbot",
       "shouldPublish": false
+    },
+    {
+      "packageName": "@gt6ce/agent-svc",
+      "projectFolder": "apps/agent-svc",
+      "shouldPublish": false
+    },
+    {
+      "packageName": "@gt6ce/github-svc",
+      "projectFolder": "apps/github-svc",
+      "shouldPublish": false
     }
   ]
 }
