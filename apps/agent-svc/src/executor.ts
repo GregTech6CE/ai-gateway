@@ -74,6 +74,11 @@ export function createDraftExecutor(options: DraftExecutorOptions): DraftExecuto
 
     let last: ModelError | undefined;
     for (const entry of entries) {
+      if (signal.aborted) {
+        // 整体截止时间已到（TaskRunner 的 AbortController）。此时换入口只会让每个候选
+        // 立刻以「已中止」失败并被记一次冷却，因此直接退出，由 runner 写「分析超时」。
+        break;
+      }
       const apiKey = options.env[entry.api_key_env] ?? '';
       if (apiKey === '') {
         // candidates 默认要求有 key；这里只是防御，正常不会走到。
@@ -93,11 +98,17 @@ export function createDraftExecutor(options: DraftExecutorOptions): DraftExecuto
           user,
           temperature: options.temperature,
           maxOutputTokens: options.maxOutputTokens,
-          abortSignal: signal,
+          // 每个入口独立的超时：某个 provider 挂住时只淘汰这一个候选，整体截止时间
+          // 仍由外层 signal 控制，两者取先到者。
+          abortSignal: AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs)]),
         });
         markSuccess(health, entry, now());
         return draft;
       } catch (error) {
+        if (signal.aborted) {
+          // 整体截止时间在调用中到达：入口本身没有问题，记冷却会误伤下一次任务。
+          break;
+        }
         const modelError = toModelError(error);
         markFailure(health, entry, modelError, options.budgets.defaults.model_pool, now());
         last = modelError;
