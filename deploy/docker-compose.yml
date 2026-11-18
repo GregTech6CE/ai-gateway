@@ -101,6 +101,8 @@ services:
     user: "10001:10001"
     <<: *hardening
     depends_on:
+      egress-proxy:
+        condition: service_healthy
       agent-svc:
         condition: service_healthy
       github-writer:
@@ -119,8 +121,10 @@ services:
       <<: *proxy-env
       AGENT_SVC_CONFIG: /app/config/agent-svc.json
       AGENT_SVC_LOG_LEVEL: info
-      MODEL_KEY_MISTRAL: ${MODEL_KEY_MISTRAL:?请设置 MODEL_KEY_MISTRAL}
-      MODEL_KEY_CLINEPASS: ${MODEL_KEY_CLINEPASS:?请设置 MODEL_KEY_CLINEPASS}
+      # 允许只配一个模型 key：缺省为空串，由 agent-svc 启动时的
+      # assertModelAvailable 保证「至少有一个绑定的 endpoint 能取到 key」。
+      MODEL_KEY_MISTRAL: ${MODEL_KEY_MISTRAL:-}
+      MODEL_KEY_CLINEPASS: ${MODEL_KEY_CLINEPASS:-}
     volumes:
       - ./config/agent-svc.json:/app/config/agent-svc.json:ro
       - ../config:/app/repo-config:ro

@@ -17,6 +17,6 @@
     }
   ],
   "pollIntervalMs": 2000,
-  "taskTimeoutMs": 180000,
+  "taskTimeoutMs": 200000,
   "sessionTtlMs": 1800000
 }

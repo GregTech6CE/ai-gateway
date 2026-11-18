@@ -8,9 +8,12 @@
 # 含 GitHub 源码下载域名；这份只覆盖常驻服务实际需要的 API 出口。
 # 改这里不需要同步 workflow。
 
-# QQ 开放平台：HTTP API 与 WebSocket 网关
+# QQ 开放平台：HTTP API、取 token 与 WebSocket 网关
 ^api\.sgroup\.qq\.com$
 ^bots\.qq\.com$
+# QQ 官方 WebSocket 网关（wss://api.bot.qq.com/websocket/）：固连地址，漏放行会
+# 让 qqbot 在启动握手阶段一直失败。
+^api\.bot\.qq\.com$
 
 # GitHub REST API：仅写回服务使用
 ^api\.github\.com$

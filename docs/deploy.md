@@ -69,6 +69,7 @@ openssl rand -hex 32 > secrets/rpc-token-github
 printf '%s' '<GITHUB_TOKEN>' > secrets/github-token
 
 # 4. 模型 key 通过环境变量注入（名称来自 config/models.json 的 api_key_env）
+#    两个至少给一个：未设置的那个按空串传入，由 agent-svc 启动时校验
 export MODEL_KEY_MISTRAL='...'
 export MODEL_KEY_CLINEPASS='...'
 
@@ -111,7 +112,10 @@ compose 仍然声明并挂载了 `github-token` secret：App 模式不再读取�
 - `stateDir` 必须是 `/app/state`（命名卷挂载点）；
 - `agentEndpoint` / `githubWriterEndpoint` 用容器名：`http://agent-svc:8080`、
   `http://github-writer:8080`；
-- `agentToken` / `githubWriterToken` 与服务侧 `secrets/rpc-token-*` 内容一致。
+- `agentToken` / `githubWriterToken` 与服务侧 `secrets/rpc-token-*` 内容一致；
+- `taskTimeoutMs` 必须大于 `agent-svc` 的 `tasks.timeout_ms`（`agent-svc` 示例为
+  180000），留出轮询收尾余量：QQ 侧先超时会让用户看到失败，即使任务随后成功；示例值
+  200000。
 
 ### `config/agent-svc.json`
 
@@ -141,7 +145,9 @@ compose 仍然声明并挂载了 `github-token` secret：App 模式不再读取�
 `deploy/egress-allowlist-docker.txt` 同时是 Tinyproxy 的 Filter 文件：每行一个
 POSIX 扩展正则，`#` 开头为注释。当前放行：
 
-- `api.sgroup.qq.com`、`bots.qq.com`（QQ HTTP API 与 WebSocket 网关）
+- `api.sgroup.qq.com`（QQ HTTP API）、`bots.qq.com`（取 access token）
+- `api.bot.qq.com`（QQ 官方 WebSocket 网关 `wss://api.bot.qq.com/websocket/`；WSS 走
+  `CONNECT`，漏放行时 qqbot 会在启动握手阶段持续失败）
 - `api.github.com`（写回）
 - `api.mistral.ai`、`api.cline.bot`（模型池）
 
@@ -219,6 +225,7 @@ docker compose up -d
 - `qqbot.json` 里的两个 RPC token 是内联值（Step 3 的配置契约），因此该文件必须按
   密钥对待；两个服务侧的 token 已经是文件引用。
 - compose 的 `MODEL_KEY_MISTRAL` / `MODEL_KEY_CLINEPASS` 是写死的变量名；换 endpoint
-  或改 `api_key_env` 时要同步修改 compose。
+  或改 `api_key_env` 时要同步修改 compose。两者都可省略，但至少一个要有值——
+  `assertModelAvailable` 在启动时强制，缺全会让容器反复重启。
 - Tinyproxy 只做域名白名单，不检查路径或方法；它防的是「把凭据发到别处」，不是
   「向允许的域名发送了不该发的请求」。
