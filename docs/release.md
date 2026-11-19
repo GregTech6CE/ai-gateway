@@ -30,6 +30,15 @@ package/dist/**          # 该应用构建后的全部文件
 sha256sum -c --ignore-missing SHASUMS256.txt
 ```
 
+## 消费方
+
+- **CI**：`orchestrator.yml` 的 `build` job 先按当前 `short` 尝试从 `snapshot` 下载
+  `gt6-ci-<short>.tgz`，校验通过后直接作为 `ci-bundle` 上传；未命中才回退到
+  `rush install` + `rush rebuild`。下游 job 只消费 artifact，不访问 Release。
+- **Docker**：三个业务镜像的默认 `release` 阶段按 `ARTIFACT_SHORT` 下载并校验
+  `gt6-<app>-<short>.tgz`，解包为 `/app/dist` 与 `/app/package.json`；
+  `--target local` 改用本机 `dist`。约束与用法见 [deploy.md](deploy.md)。
+
 ## 本地打包
 
 ```bash

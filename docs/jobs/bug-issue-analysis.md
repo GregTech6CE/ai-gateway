@@ -20,17 +20,24 @@ build ──> gate ──> analysis ──> finalize
 
 ### 权限边界
 
-- **文件访问**：读整个检出目录；写 `common/temp/`（Rush 的依赖与链接）与各包的 `dist/`。
+- **文件访问**：读整个检出目录；写 `apps/ci/dist` 与 `$RUNNER_TEMP` 下的临时包。回退
+  构建时另写 `common/temp/`（Rush 的依赖与链接）。
 - **容器权限**：`ubuntu-latest`，`timeout-minutes: 15`，无提权、无沙箱特例。
-- **网络访问**：npm registry（首次安装依赖）。不接触 issue 内容与模型端点。
+- **网络访问**：`github.com` 与 `objects.githubusercontent.com`（下载 `snapshot` 资产）；
+  回退构建时另访问 npm registry。不接触 issue 内容与模型端点。
 - **Token 权限**：`contents: read`。
 
 ### 执行流程
 
-1. 检出本仓库，安装 Node 22。
-2. `rush install` 按 `pnpm-lock.yaml` 安装依赖。
-3. `rush build --to @gt6ce/ci`，产出 `apps/ci/dist`（内联 `@gt6ce/*`、AI SDK 与 zod）。
+1. 检出本仓库，取 `git rev-parse --short=7 HEAD`。
+2. 优先下载 `snapshot` 的 `SHASUMS256.txt` 与 `gt6-ci-<short>.tgz`：清单必须包含精确
+   校验行，`sha256sum -c` 必须通过；命中后把 `package/dist` 解到 `apps/ci/dist`。
+3. 未命中（资产缺失、校验失败、`force_rebuild=true`）时安装 Node 22，按
+   `pnpm-lock.yaml` 恢复 pnpm store 缓存，执行 `rush install` 与
+   `rush rebuild --to @gt6ce/ci`。
 4. 上传 `ci-<run_id>` artifact。
+
+下载集中在 `build`：下游 `analysis` 的 harden-runner 不需要为 Release CDN 放宽。
 
 ### 最终产出
 

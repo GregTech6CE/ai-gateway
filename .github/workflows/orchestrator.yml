@@ -48,6 +48,11 @@ on:
         required: false
         default: "false"
         type: string
+      force_rebuild:
+        description: 跳过 snapshot Release，强制现场构建 CI
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -63,16 +68,77 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: read
+    outputs:
+      bundle_source: ${{ steps.resolve.outputs.source }}
+    env:
+      ARTIFACT_BASE: https://github.com/${{ github.repository }}/releases/download/snapshot
     steps:
       - uses: actions/checkout@v4
+
+      # 先试 snapshot Release：命中时只下载 + 校验 + 解包，不装依赖、不构建。
+      # 由 build 统一拉取，下游 analysis 的 harden-runner 白名单无需为 Release CDN 放宽。
+      - name: Resolve CI bundle
+        id: resolve
+        env:
+          FORCE_REBUILD: ${{ inputs.force_rebuild || 'false' }}
+        run: |
+          set -euo pipefail
+          short=$(git rev-parse --short=7 HEAD)
+          echo "short=$short" >> "$GITHUB_OUTPUT"
+
+          hit=false
+          source=build
+          work="$RUNNER_TEMP/ci-bundle"
+          mkdir -p "$work"
+          if [ "$FORCE_REBUILD" != "true" ]; then
+            if curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 10 --max-time 120 \
+                "$ARTIFACT_BASE/SHASUMS256.txt" -o "$work/SHASUMS256.txt" \
+              && curl -fsSL --retry 2 --retry-delay 1 --connect-timeout 10 --max-time 120 \
+                "$ARTIFACT_BASE/gt6-ci-${short}.tgz" -o "$work/gt6-ci-${short}.tgz"; then
+              if grep -Eq "^[0-9a-f]{64}  gt6-ci-${short}\.tgz$" "$work/SHASUMS256.txt"; then
+                (cd "$work" && sha256sum -c --ignore-missing SHASUMS256.txt)
+                hit=true
+              else
+                echo "清单中没有 gt6-ci-${short}.tgz，回退现场构建"
+              fi
+            else
+              echo "snapshot 缺少 ${short} 的资产，回退现场构建"
+            fi
+          else
+            echo "force_rebuild=true，跳过 snapshot"
+          fi
+
+          if [ "$hit" = "true" ]; then
+            rm -rf apps/ci/dist
+            mkdir -p apps/ci/dist
+            # 与 ci-bundle 的上传布局一致：归档里的 package/dist 直接落到 apps/ci/dist。
+            tar -xzf "$work/gt6-ci-${short}.tgz" -C apps/ci --strip-components=1 package/dist
+            source=snapshot
+            echo "使用 snapshot ${short} 的 gt6-ci 包"
+          fi
+          echo "hit=$hit" >> "$GITHUB_OUTPUT"
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+
       - uses: actions/setup-node@v4
+        if: steps.resolve.outputs.hit != 'true'
         with:
           node-version: "22"
-      - name: Install and build CI
+
+      - name: Cache pnpm store
+        if: steps.resolve.outputs.hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: common/temp/pnpm-store
+          key: pnpm-${{ hashFiles('common/config/rush/pnpm-lock.yaml') }}
+          restore-keys: pnpm-
+
+      - name: Install and rebuild CI
+        if: steps.resolve.outputs.hit != 'true'
         run: |
           set -euo pipefail
           node common/scripts/install-run-rush.js install
-          node common/scripts/install-run-rush.js build --to @gt6ce/ci
+          node common/scripts/install-run-rush.js rebuild --to @gt6ce/ci
+
       # 只上传 apps/ci/dist：其中已内联 @gt6ce/*、AI SDK 与 zod，下游不需要再装依赖。
       - name: Upload CI bundle
         uses: actions/upload-artifact@v4

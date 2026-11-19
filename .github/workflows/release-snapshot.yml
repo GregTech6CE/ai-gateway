@@ -186,7 +186,7 @@ jobs:
           }
 
           download SHASUMS256.txt
-          download "gt6-ci-*.tgz"
+          download "gt6-ci-${SHORT}.tgz"
 
           for app in gt6-ci gt6-qqbot gt6-agent-svc gt6-github-svc; do
             grep -Eq "^[0-9a-f]{64}  ${app}-${SHORT}\.tgz$" "$verify_dir/SHASUMS256.txt"

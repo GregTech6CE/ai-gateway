@@ -13,7 +13,8 @@
 ## 分析流程
 
 1. 调用方以 `workflow_dispatch` 提交 issue 仓库、编号与事件类型。
-2. `build`：安装依赖并把 `apps/ci` 打成 artifact，后续 job 只下载这一份产物。
+2. `build`：优先拉取 `snapshot` Release 中已校验的 `gt6-ci` 包，未命中才安装依赖现场
+   构建；后续 job 只下载这一份 artifact。
 3. `gate`：只读校验仓库配置、issue 状态、触发者权限、`bot:v1:` 标记与 7 天超期，通过后
    生成快照；显式 `force` 无视标记与时间窗口。
 4. `analysis`：按 issue 报告的版本检出代码、预取附件，再做相关性分类，然后由
