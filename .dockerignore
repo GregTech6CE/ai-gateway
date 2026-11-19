@@ -1,7 +1,7 @@
 # 构建上下文只保留镜像真正需要的文件。
 #
 # compose 的 context 是仓库根目录，如果不限制会把 common/temp/node_modules
-# （数百 MB）一起发给 daemon；镜像只拷贝 dist 与 package.json。
+# （数百 MB）一起发给 daemon；镜像只拷贝 dist、package.json 与 release 下载脚本。
 *
 !apps/qqbot/dist/**
 !apps/qqbot/package.json
@@ -13,5 +13,6 @@
 !deploy/Dockerfile.agent-svc
 !deploy/Dockerfile.github-svc
 !deploy/Dockerfile.egress-proxy
+!deploy/fetch-artifact.mjs
 !deploy/tinyproxy/**
 !deploy/egress-allowlist-docker.txt

@@ -1,20 +1,49 @@
 # QQ 机器人运行镜像。
 #
-# 构建上下文是仓库根目录，且需要先执行 `rush rebuild`（dist 由 tsdown 产出）：
-#   docker build -f deploy/Dockerfile.qqbot -t gt6ce/qqbot .
+# release（默认）：从 snapshot Release 下载并校验 gt6-qqbot-<short>.tgz
+#   docker build -f deploy/Dockerfile.qqbot -t gt6ce/qqbot \
+#     --build-arg ARTIFACT_SHORT=$(git rev-parse --short=7 HEAD) .
 #
-# 镜像里没有源码、没有依赖清单解析、没有包管理器：dist 已内联 @gt6ce/qqbot、
-# @gt6ce/shared、QQ SDK 与 zod，运行期只需要 node。
-FROM node:22-slim
+# local：使用本机 dist（先 `rush rebuild`），便于离线调试
+#   docker build -f deploy/Dockerfile.qqbot --target local -t gt6ce/qqbot .
+#
+# 构建上下文是仓库根目录。镜像里没有源码、依赖清单解析或包管理器：dist 已内联
+# @gt6ce/qqbot、@gt6ce/shared、QQ SDK 与 zod，运行期只需要 node。
+FROM node:22-slim AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app
+
+FROM runtime AS local
 
 COPY apps/qqbot/dist ./dist
 COPY apps/qqbot/package.json ./package.json
 
 # stateDir 由命名卷挂载；目录属主提前设为运行用户，首次创建卷时才可写。
 RUN mkdir -p /app/state && chown 10001:10001 /app/state
+
+USER 10001:10001
+STOPSIGNAL SIGTERM
+
+CMD ["node", "dist/main.js"]
+
+# 默认最终阶段：内容来自发布资产，构建时完成清单匹配与 SHA-256 校验。
+FROM runtime AS release
+
+ARG ARTIFACT_BASE=https://github.com/GregTech6CE/ai-gateway/releases/download/snapshot
+# 必填：为空时 fetch-artifact.mjs 直接失败，并提示传入 --build-arg ARTIFACT_SHORT=<short>。
+ARG ARTIFACT_SHORT=
+
+COPY deploy/fetch-artifact.mjs /usr/local/lib/fetch-artifact.mjs
+
+RUN node /usr/local/lib/fetch-artifact.mjs \
+      --app gt6-qqbot \
+      --short "${ARTIFACT_SHORT}" \
+      --base "${ARTIFACT_BASE}" \
+      --dest /app \
+ && mkdir -p /app/state \
+ && chown -R 10001:10001 /app \
+ && rm -f /usr/local/lib/fetch-artifact.mjs
 
 USER 10001:10001
 STOPSIGNAL SIGTERM

@@ -41,12 +41,16 @@ prompt injection 攻破时都拿不到完整凭据链。
 ## 3. 前置条件
 
 - Docker Engine + Compose v2（`docker compose version` 可用）。
-- 构建镜像前先产出 `dist`：
+- 构建模式二选一：
+  - **release（默认）**：`snapshot` Release 中已有目标 commit 的 4 个 `.tgz` 与
+    `SHASUMS256.txt`（见 [release.md](release.md)）。构建时下载并校验，不需要本机
+    `dist`。
+  - **local**：本机先产出 `dist`，适合离线调试或发布流水线尚未完成时：
 
-  ```bash
-  node common/scripts/install-run-rush.js install
-  node common/scripts/install-run-rush.js rebuild
-  ```
+    ```bash
+    node common/scripts/install-run-rush.js install
+    node common/scripts/install-run-rush.js rebuild
+    ```
 
 - `NODE_USE_ENV_PROXY=1` 需要 Node 22.21+；`node:22-slim` 跟随 22.x 最新版本。
 
@@ -74,6 +78,8 @@ export MODEL_KEY_MISTRAL='...'
 export MODEL_KEY_CLINEPASS='...'
 
 # 5. 校验与启动
+#    默认 release：镜像从 snapshot Release 取 gt6-<app>-<short>.tgz 并校验
+export ARTIFACT_SHORT=$(git rev-parse --short=7 HEAD)
 docker compose config
 docker compose build
 docker compose up -d
@@ -81,6 +87,19 @@ docker compose up -d
 
 `deploy/config/*.json` 与 `deploy/secrets/` 已被 `.gitignore` 排除，只有
 `*.example.json` 会入库。
+
+### 构建模式
+
+三个业务镜像都是多阶段构建，`release` 是默认最终阶段：
+
+| 模式 | 命令 | 内容来源 | 适用场景 |
+|---|---|---|---|
+| `release` | `ARTIFACT_SHORT=<short> docker compose build` | `snapshot` Release 的 `.tgz`，构建期校验清单与 SHA-256 | 正常部署、可复现 |
+| `local` | `BUILD_TARGET=local docker compose build` | 本机 `apps/*/dist` | 离线、改代码后快速验证 |
+
+`ARTIFACT_BASE` 可覆盖资产地址（例如内网镜像）；`ARTIFACT_SHORT` 为空时构建会直接
+失败并提示传入 `--build-arg ARTIFACT_SHORT=<short>`（compose 下设置同名环境变量）。
+`egress-proxy` 不参与该选择。
 
 ### GitHub App 模式
 
@@ -227,5 +246,7 @@ docker compose up -d
 - compose 的 `MODEL_KEY_MISTRAL` / `MODEL_KEY_CLINEPASS` 是写死的变量名；换 endpoint
   或改 `api_key_env` 时要同步修改 compose。两者都可省略，但至少一个要有值——
   `assertModelAvailable` 在启动时强制，缺全会让容器反复重启。
+- release 构建依赖 `snapshot` Release：资产尚未发布、被后续 commit 覆盖或 GitHub
+  不可达时构建失败。此时改用 `BUILD_TARGET=local`，或等发布流水线完成后再构建。
 - Tinyproxy 只做域名白名单，不检查路径或方法；它防的是「把凭据发到别处」，不是
   「向允许的域名发送了不该发的请求」。

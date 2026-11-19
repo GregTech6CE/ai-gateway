@@ -1,16 +1,46 @@
 # 分析服务运行镜像。
 #
-#   docker build -f deploy/Dockerfile.agent-svc -t gt6ce/agent-svc .
+# release（默认）：从 snapshot Release 下载并校验 gt6-agent-svc-<short>.tgz
+#   docker build -f deploy/Dockerfile.agent-svc -t gt6ce/agent-svc \
+#     --build-arg ARTIFACT_SHORT=$(git rev-parse --short=7 HEAD) .
+#
+# local：使用本机 dist（先 `rush rebuild`）
+#   docker build -f deploy/Dockerfile.agent-svc --target local -t gt6ce/agent-svc .
 #
 # dist 已内联 @gt6ce/agent、@gt6ce/shared、AI SDK、provider 与 zod；
 # 配置文件、repos/models/budgets 与 prompts 由 compose 只读挂载。
-FROM node:22-slim
+FROM node:22-slim AS runtime
 
 ENV NODE_ENV=production
 WORKDIR /app
 
+FROM runtime AS local
+
 COPY apps/agent-svc/dist ./dist
 COPY apps/agent-svc/package.json ./package.json
+
+USER 10001:10001
+STOPSIGNAL SIGTERM
+EXPOSE 8080
+
+CMD ["node", "dist/main.js"]
+
+# 默认最终阶段：内容来自发布资产，构建时完成清单匹配与 SHA-256 校验。
+FROM runtime AS release
+
+ARG ARTIFACT_BASE=https://github.com/GregTech6CE/ai-gateway/releases/download/snapshot
+# 必填：为空时 fetch-artifact.mjs 直接失败，并提示传入 --build-arg ARTIFACT_SHORT=<short>。
+ARG ARTIFACT_SHORT=
+
+COPY deploy/fetch-artifact.mjs /usr/local/lib/fetch-artifact.mjs
+
+RUN node /usr/local/lib/fetch-artifact.mjs \
+      --app gt6-agent-svc \
+      --short "${ARTIFACT_SHORT}" \
+      --base "${ARTIFACT_BASE}" \
+      --dest /app \
+ && chown -R 10001:10001 /app \
+ && rm -f /usr/local/lib/fetch-artifact.mjs
 
 USER 10001:10001
 STOPSIGNAL SIGTERM
