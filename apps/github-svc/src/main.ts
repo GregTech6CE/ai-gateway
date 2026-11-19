@@ -4,6 +4,8 @@
  * 配置路径来自 `GITHUB_SVC_CONFIG`；白名单来自 `repos.json`。启动顺序是
  * 「配置 → 白名单 → 认证方式 → 监听」，任一步失败都退出。
  */
+import { resolve } from 'node:path';
+
 import { ConfigError, createLogger, loadReposConfig, type LogLevel } from '@gt6ce/shared';
 
 import { loadGitHubSvcConfig } from './config.ts';
@@ -55,6 +57,8 @@ async function main(): Promise<void> {
     port: config.server.port,
     authMode: config.github.mode,
     repos: Object.keys(repos.repos).length,
+    configPath: resolve(configPath),
+    configDir: config.configDir,
   });
 
   let shuttingDown = false;

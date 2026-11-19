@@ -26,6 +26,7 @@ import { loadReposConfig, resolveRepoConfig, safeParseAnswer } from '@gt6ce/shar
 import {
   errorMessage,
   isJobEntry,
+  logStageDirs,
   optionalEnv,
   readJsonFile,
   requireEnv,
@@ -208,7 +209,9 @@ export async function runWriteBack(options: WriteBackOptions): Promise<WriteBack
 }
 
 export async function main(): Promise<void> {
-  const outcome = await runWriteBack({ env: readWriteBackEnv(), dirs: resolveDirs() });
+  const dirs = resolveDirs();
+  logStageDirs('write-back', dirs);
+  const outcome = await runWriteBack({ env: readWriteBackEnv(), dirs });
   process.stdout.write(`${JSON.stringify(outcome)}\n`);
   if (outcome.action === 'blocked') {
     process.exitCode = 1;

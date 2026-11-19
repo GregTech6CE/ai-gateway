@@ -5,6 +5,8 @@
  * `api_key_env`）。启动顺序是「配置 → 白名单 → 模型可用性 → 监听」，任一步失败都退出，
  * 不带着半套配置接流量。
  */
+import { resolve } from 'node:path';
+
 import { ConfigError, createLogger, loadBudgetsConfig, loadModelsConfig, loadReposConfig, type LogLevel } from '@gt6ce/shared';
 
 import { assertModelAvailable, loadAgentSvcConfig } from './config.ts';
@@ -74,6 +76,9 @@ async function main(): Promise<void> {
     port: config.server.port,
     concurrency: config.tasks.concurrency,
     pool: config.model.pool,
+    configPath: resolve(configPath),
+    configDir: config.configDir,
+    promptsDir: config.promptsDir,
   });
 
   let shuttingDown = false;

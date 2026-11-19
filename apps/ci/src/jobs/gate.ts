@@ -46,6 +46,7 @@ import {
 import {
   errorMessage,
   isJobEntry,
+  logStageDirs,
   optionalEnv,
   requireEnv,
   resolveDirs,
@@ -396,6 +397,7 @@ export async function runGate(options: GateOptions): Promise<GateOutcome> {
 export async function main(): Promise<void> {
   const env = readGateEnv();
   const dirs = resolveDirs();
+  logStageDirs('gate', dirs);
   const outcome = await runGate({ env, dirs });
   writeGithubOutput(outcome.outputs);
 }

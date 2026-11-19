@@ -12,6 +12,7 @@ import { GitHubApiError } from '@gt6ce/shared';
 import {
   errorMessage,
   isJobEntry,
+  logStageDirs,
   optionalEnv,
   readJsonFile,
   requireEnv,
@@ -82,10 +83,12 @@ export async function runUpdateHealth(
 }
 
 export async function main(): Promise<void> {
+  const dirs = resolveDirs();
+  logStageDirs('update-health', dirs);
   try {
     const outcome = await runUpdateHealth({
       env: readUpdateHealthEnv(),
-      dirs: resolveDirs(),
+      dirs,
     });
     process.stdout.write(`${JSON.stringify(outcome)}\n`);
   } catch (error) {

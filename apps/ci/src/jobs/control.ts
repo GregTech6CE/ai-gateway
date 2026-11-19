@@ -18,6 +18,7 @@ import { loadBudgetsConfig, loadReposConfig, resolveRepoConfig } from '@gt6ce/sh
 import {
   errorMessage,
   isJobEntry,
+  logStageDirs,
   optionalEnv,
   readJsonFile,
   requireEnv,
@@ -570,6 +571,7 @@ export async function cleanup(env: ControlEnv, deps: ControlDeps): Promise<void>
 export async function main(command: string | undefined): Promise<void> {
   const env = readControlEnv();
   const deps: ControlDeps = { dirs: resolveDirs() };
+  logStageDirs(`control:${command ?? 'none'}`, deps.dirs);
   switch (command) {
     case 'start': {
       const outcome = await start(env, deps);

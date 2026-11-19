@@ -19,6 +19,7 @@ import { loadReposConfig, resolveRepoConfig, type Answer } from '@gt6ce/shared';
 import {
   errorMessage,
   isJobEntry,
+  logStageDirs,
   optionalEnv,
   readJsonFile,
   requireEnv,
@@ -156,7 +157,9 @@ function parseAnswerOrError(raw: unknown): ParsedAnswer {
 }
 
 export async function main(): Promise<void> {
-  const outcome = runRender({ env: readRenderEnv(), dirs: resolveDirs() });
+  const dirs = resolveDirs();
+  logStageDirs('render', dirs);
+  const outcome = runRender({ env: readRenderEnv(), dirs });
   process.stdout.write(`${JSON.stringify(outcome)}\n`);
 }
 

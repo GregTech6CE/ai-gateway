@@ -49,6 +49,7 @@ import {
 import {
   errorMessage,
   isJobEntry,
+  logStageDirs,
   modelKeys,
   readJsonFile,
   requireEnv,
@@ -475,11 +476,13 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
 
 export async function main(): Promise<void> {
   const env = readAnalysisEnv();
+  const dirs = resolveDirs();
+  logStageDirs('analysis', dirs);
   const secrets = secretValues(process.env, Object.keys(env.MODEL_KEYS));
   if (secrets.length === 0) {
     process.stderr.write('warning: 没有任何 MODEL_KEY_* 可用\n');
   }
-  const outcome = await runAnalysis({ env, dirs: resolveDirs() });
+  const outcome = await runAnalysis({ env, dirs });
   if (outcome.status === 'failed') {
     process.exitCode = 1;
   }

@@ -4,6 +4,8 @@
  * 职责只有三件：读配置、起应用、处理信号。所有运行参数来自 `QQBOT_CONFIG`
  * 指向的 JSON 文件；这里不解析其他业务环境变量，也不打印配置内容。
  */
+import { resolve } from 'node:path';
+
 import { ConfigError, createLogger, type LogLevel } from '@gt6ce/shared';
 
 import { loadConfig } from './config.ts';
@@ -41,6 +43,13 @@ async function main(): Promise<void> {
   }
 
   const config = loadConfig(configPath);
+  // 启动阶段先交代「读的是哪份配置、状态落在哪」：容器里挂错文件是最常见的故障。
+  logger.info('配置已加载', {
+    configPath: resolve(configPath),
+    stateDir: resolve(config.stateDir),
+    bindings: config.bindings.length,
+    sandbox: config.sandbox,
+  });
   app = createApp({
     config,
     logger,

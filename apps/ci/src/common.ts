@@ -143,6 +143,24 @@ export function stageLogger(
   });
 }
 
+/**
+ * 启动阶段打印实际生效的目录。
+ *
+ * 每个 CI job 是独立进程，排查「加载了哪一份配置/提示词」时先看这一行。只记录路径，
+ * 不读取也不打印任何凭据。
+ */
+export function logStageDirs(job: string, dirs: StageDirs): void {
+  stageLogger(job, []).info('阶段启动', {
+    root: dirs.root,
+    config: dirs.config,
+    prompts: dirs.prompts,
+    templates: dirs.templates,
+    inputs: dirs.inputs,
+    outputs: dirs.outputs,
+    code: dirs.code,
+  });
+}
+
 /** 从 `MODEL_KEY_*` 里收集本次可用的 key，返回 name → value。 */
 export function modelKeys(source: NodeJS.ProcessEnv): Record<string, string> {
   const keys: Record<string, string> = {};

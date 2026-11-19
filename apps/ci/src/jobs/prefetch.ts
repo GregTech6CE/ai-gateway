@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { prefetchAttachments, type FetchLike, type PrefetchResult } from '@gt6ce/agent';
 import { loadBudgetsConfig } from '@gt6ce/shared';
 
-import { isJobEntry, readJsonFile, resolveDirs, type StageDirs } from '../common.ts';
+import { isJobEntry, logStageDirs, readJsonFile, resolveDirs, type StageDirs } from '../common.ts';
 
 interface SnapshotShape {
   readonly attachments?: readonly string[];
@@ -37,7 +37,9 @@ export async function runPrefetch(options: PrefetchOptions): Promise<PrefetchRes
 }
 
 export async function main(): Promise<void> {
-  const result = await runPrefetch({ dirs: resolveDirs() });
+  const dirs = resolveDirs();
+  logStageDirs('prefetch', dirs);
+  const result = await runPrefetch({ dirs });
   for (const note of result.notes) {
     process.stdout.write(`${note}\n`);
   }

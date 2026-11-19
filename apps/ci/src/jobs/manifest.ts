@@ -11,6 +11,7 @@ import { loadReposConfig, resolveRepoConfig } from '@gt6ce/shared';
 
 import {
   isJobEntry,
+  logStageDirs,
   optionalEnv,
   readJsonFile,
   resolveDirs,
@@ -62,7 +63,9 @@ export function runManifest(options: ManifestOptions): ManifestSummary {
 }
 
 export async function main(): Promise<void> {
-  const summary = runManifest({ dirs: resolveDirs(), repo: optionalEnv(process.env, 'REPO') });
+  const dirs = resolveDirs();
+  logStageDirs('manifest', dirs);
+  const summary = runManifest({ dirs, repo: optionalEnv(process.env, 'REPO') });
   process.stdout.write(`${JSON.stringify(summary)}\n`);
 }
 
