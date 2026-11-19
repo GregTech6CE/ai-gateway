@@ -139,6 +139,13 @@ const defaultSleep = async (ms: number): Promise<void> => {
   await new Promise((resolve) => setTimeout(resolve, ms));
 };
 
+/**
+ * 软着陆预留：硬超时前 2 分钟停止提供工具，让模型用已有证据写结论。
+ *
+ * 与 `budgets.l2.timeout_minutes` 配合使用——60 分钟的分析实际在 58 分钟开始收尾。
+ */
+const WRAP_UP_RESERVE_MS = 2 * 60_000;
+
 function issuePrompt(snapshot: SnapshotShape | undefined, repo: string, issue: string): string {
   const versionTag = snapshot?.version_tag ?? '';
   const history = versionTag
@@ -404,6 +411,10 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
           prompt: { system: systemPrompt, user: userPrompt, profile: repoCfg.prompt_profile },
           tools,
           timeoutMs: Math.max(5_000, deadline - Date.now()),
+          // 软截止比硬超时早 2 分钟：到点后禁用工具，给模型留出写结论的时间，
+          // 避免像以前那样撞步数上限、最后一步只有工具调用而没有正文。
+          softTimeoutMs: Math.max(5_000, deadline - Date.now() - WRAP_UP_RESERVE_MS),
+          loopRepeatThreshold: budgets.l2.loop_repeat_threshold,
           temperature: 0,
           onStep: (step) => {
             log.info('agent step', {
@@ -425,9 +436,11 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
       } catch (error) {
         if (error instanceof AgentError) {
           // 契约未满足不是传输故障：不换入口也不重试，直接以失败收尾。
+          // steps/tokens 来自错误自身：失败前已经跑过的调查要如实记录，不能写 0。
           lastError = error.message;
           return finish('failed', lastError, {
-            steps: 0,
+            steps: error.steps ?? 0,
+            tokens: error.tokens ?? 0,
             entry_id: entry.id,
             attempts: result.attempts,
           });

@@ -230,10 +230,17 @@ export const RelevanceBudgetSchema = z
   })
   .strict();
 
-/** L2 分析只有墙钟上限：轮次、token 配额与停滞检测都已移除。 */
+/** L2 分析的预算：墙钟上限 + 绕圈检测阈值（不再有 token 配额与固定轮次上限）。 */
 export const L2BudgetSchema = z
   .object({
     timeout_minutes: z.number().int().positive().default(60),
+    /**
+     * 连续多少步出现完全相同的工具调用（工具名 + 参数）即判定为绕圈。
+     *
+     * 触发后不再给工具，由模型基于已有证据收尾。默认 3：一步重复通常只是重试，
+     * 连续三次完全相同基本可以确定在原地打转。
+     */
+    loop_repeat_threshold: z.number().int().min(2).default(3),
   })
   .strict();
 

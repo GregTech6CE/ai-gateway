@@ -175,11 +175,11 @@ const TOOLS = {
   }),
 };
 
-const READ_CALL: ReplyToolCall = {
-  id: 'call-1',
-  name: 'read_file',
-  args: JSON.stringify({ path: 'README.md' }),
-};
+function readCall(id: string, path: string): ReplyToolCall {
+  return { id, name: 'read_file', args: JSON.stringify({ path }) };
+}
+
+const READ_CALL: ReplyToolCall = readCall('call-1', 'README.md');
 
 describe('请求形状：tools 与 response_format 不同时出现', () => {
   it('探索阶段带 tools，但不带 response_format', async () => {
@@ -285,7 +285,7 @@ describe('两阶段行为', () => {
     expect(formatter.tools).toBeUndefined();
   });
 
-  it('两阶段都无法产出合法 Answer 时抛 AgentError，且只发 3 次请求', async () => {
+  it('两阶段都无法产出合法 Answer 时抛 AgentError，且携带真实 steps/tokens', async () => {
     const harness = await provider([
       { toolCalls: [READ_CALL] },
       { content: '我先看了 README，还没形成结论。' },
@@ -299,9 +299,109 @@ describe('两阶段行为', () => {
     });
 
     await expect(failure).rejects.toBeInstanceOf(AgentError);
-    await expect(failure).rejects.toMatchObject({ name: 'AgentError' });
+    // 关键：失败也要带出「跑了 2 步、烧了 36 token」，而不是 0。
+    await expect(failure).rejects.toMatchObject({ steps: 2, tokens: 36 });
     // 1 次探索 + 1 次工具后续 + 1 次格式化，没有重试。
     expect(harness.count).toBe(3);
+  });
+});
+
+describe('无步数上限与软着陆', () => {
+  it('不传 maxSteps 时可以连续执行超过 60 步，直到模型自然结束', async () => {
+    // 61 次不同路径的工具调用 + 1 次最终回答：若仍存在 60 步硬上限，这里会失败。
+    const script: Reply[] = [];
+    for (let index = 0; index < 61; index += 1) {
+      script.push({ toolCalls: [readCall(`call-${index}`, `file-${index}.md`)] });
+    }
+    script.push({ content: JSON.stringify(ANSWER) });
+
+    const harness = await provider(script);
+    const outcome = await analyzeIssue({
+      model: modelFor(harness),
+      prompt: { system: 's', user: 'u' },
+      tools: TOOLS,
+    });
+
+    expect(outcome.steps).toBe(62);
+    expect(harness.count).toBe(62);
+    expect(outcome.answer.issue_type).toBe('bug');
+  });
+
+  it('连续重复工具调用达到阈值时，下一步禁用工具并软着陆', async () => {
+    const harness = await provider([
+      { toolCalls: [readCall('call-1', 'README.md')] },
+      { toolCalls: [readCall('call-2', 'README.md')] },
+      { toolCalls: [readCall('call-3', 'README.md')] },
+      { content: JSON.stringify(ANSWER) },
+    ]);
+
+    const outcome = await analyzeIssue({
+      model: modelFor(harness),
+      prompt: { system: 's', user: 'u' },
+      tools: TOOLS,
+      loopRepeatThreshold: 3,
+    });
+
+    expect(outcome.answer.issue_type).toBe('bug');
+    expect(outcome.steps).toBe(4);
+    // 第 4 次请求（index 3）应当没有工具，且带上收尾指令。
+    const wrapUp = harness.captured[3]?.body as {
+      tools?: unknown;
+      tool_choice?: unknown;
+      messages?: unknown;
+    };
+    // tools 被清空（provider 在无工具时不会发送 tool_choice，只能断言「没有工具 + 有指令」）。
+    expect(wrapUp.tools ?? []).toEqual([]);
+    expect(JSON.stringify(wrapUp.messages)).toContain('停止调用工具');
+  });
+
+  it('softTimeoutMs 到点后同样触发软着陆', async () => {
+    const harness = await provider([
+      { toolCalls: [readCall('call-1', 'README.md')] },
+      { content: JSON.stringify(ANSWER) },
+    ]);
+
+    const outcome = await analyzeIssue({
+      model: modelFor(harness),
+      prompt: { system: 's', user: 'u' },
+      tools: TOOLS,
+      softTimeoutMs: 0,
+    });
+
+    expect(outcome.steps).toBe(2);
+    const second = harness.captured[1]?.body as {
+      tools?: unknown;
+      tool_choice?: unknown;
+    };
+    expect(second.tools ?? []).toEqual([]);
+  });
+
+  it('探索阶段没有正文但跑过工具时，用消息历史完成格式化', async () => {
+    const harness = await provider([
+      { toolCalls: [readCall('call-1', 'README.md')] },
+      { content: '' },
+      { content: JSON.stringify(ANSWER) },
+    ]);
+
+    const outcome = await analyzeIssue({
+      model: modelFor(harness),
+      prompt: { system: 's', user: 'u' },
+      tools: TOOLS,
+    });
+
+    expect(outcome.answer.issue_type).toBe('bug');
+    expect(outcome.steps).toBe(2);
+
+    const formatter = harness.captured[2]?.body as {
+      tools?: unknown;
+      response_format?: { type?: string };
+      messages?: Array<{ role?: string }>;
+    };
+    expect(formatter.tools).toBeUndefined();
+    expect(formatter.response_format?.type).toBe('json_schema');
+    // 必须带上工具结果，不能只给一句空指令。
+    expect(formatter.messages?.some((message) => message.role === 'tool')).toBe(true);
+    expect(formatter.messages?.at(-1)?.role).toBe('user');
   });
 });
 

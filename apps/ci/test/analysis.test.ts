@@ -200,12 +200,15 @@ describe('runAnalysis 遇到 AgentError', () => {
     expect(entry?.status).not.toBe('cooldown');
     expect(entry?.failures ?? 0).toBe(0);
 
-    // 5. result.json 也如实记录。
+    // 5. result.json 也如实记录：失败不代表「没花代价」，steps/tokens 不能写 0。
     const result = JSON.parse(readFileSync(join(dirs.outputs, 'result.json'), 'utf8')) as {
       status: string;
       reason: string;
       attempts: number;
+      steps: number;
+      tokens: number;
     };
-    expect(result).toMatchObject({ status: 'failed', attempts: 1 });
+    expect(result).toMatchObject({ status: 'failed', attempts: 1, steps: 1 });
+    expect(result.tokens).toBeGreaterThan(0);
   });
 });

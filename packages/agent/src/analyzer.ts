@@ -9,7 +9,7 @@
  */
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { AnswerSchema, redactText, type Answer } from '@gt6ce/shared';
-import { Output, generateText, stepCountIs, type LanguageModel, type ToolSet } from 'ai';
+import { Output, generateText, stepCountIs, type LanguageModel, type ModelMessage, type ToolSet } from 'ai';
 import { z } from 'zod';
 
 import { toModelError } from './model-pool.ts';
@@ -61,9 +61,25 @@ export interface PromptTemplate {
 }
 
 export class AgentError extends Error {
-  constructor(message: string) {
+  /**
+   * 失败前已完成的探索步数。
+   *
+   * 调用方会把它写进 `result.json`：此前失败分支硬编码 0，导致「实际跑了 60 步」
+   * 在产物里显示为 0，排查时会被误导。
+   */
+  readonly steps?: number;
+  /** 失败前已消耗的总 token。 */
+  readonly tokens?: number;
+
+  constructor(message: string, stats: { readonly steps?: number; readonly tokens?: number } = {}) {
     super(message);
     this.name = 'AgentError';
+    if (stats.steps !== undefined) {
+      this.steps = stats.steps;
+    }
+    if (stats.tokens !== undefined) {
+      this.tokens = stats.tokens;
+    }
   }
 }
 
@@ -155,8 +171,21 @@ export interface AnalyzeIssueOptions {
   readonly model: LanguageModel;
   readonly prompt: PromptTemplate;
   readonly tools: ToolSet;
-  /** 工具循环的硬上限；默认 60，防止单次分析无限调用工具。 */
+  /**
+   * 可选的硬步数上限；**不传则不限步数**。
+   *
+   * 生产路径不传：步数上限会与真实工作量脱钩（issue 复杂度差异很大），改由
+   * `softTimeoutMs` 与死循环检测触发软着陆。保留该参数是给测试与特殊调用方用。
+   */
   readonly maxSteps?: number;
+  /**
+   * 软截止时间：到达后不再允许调用工具，逼模型用已有证据收尾。
+   *
+   * 应当比整体超时（`abortSignal` / `timeoutMs`）早一段，留出收尾余量。
+   */
+  readonly softTimeoutMs?: number;
+  /** 连续多少步出现完全相同的工具调用即判定为绕圈，默认 3。 */
+  readonly loopRepeatThreshold?: number;
   readonly temperature?: number;
   readonly timeoutMs?: number;
   readonly abortSignal?: AbortSignal;
@@ -186,14 +215,27 @@ export interface AnalysisOutcome {
  * 「没有调查就作答」。因此这里保证：
  *
  * 1. 探索阶段只传 `tools`，绝不传 `output`（即不产生 `response_format`）；
- * 2. 探索结束后先尝试从最终文本里解析 `Answer`；
- * 3. 解析不出来时，再用**一次**不带 `tools` 的请求，把这段文本收敛成 `AnswerSchema`。
+ * 2. 探索阶段**不设步数上限**：issue 复杂度差异很大，固定步数与真实工作量脱钩。
+ *    收尾由两个信号触发——软截止时间到点，或连续若干步工具调用完全重复（绕圈）；
+ * 3. 触发收尾后由 `prepareStep` 清空 `activeTools` 并追加一条收尾指令，逼模型用已有
+ *    证据作答；
+ * 4. 探索结束后先尝试从最终文本解析 `Answer`；失败再发起一次不带 `tools` 的格式化请求。
  */
 export async function analyzeIssue(options: AnalyzeIssueOptions): Promise<AnalysisOutcome> {
-  const maxSteps = options.maxSteps ?? 60;
   const abortSignal =
     options.abortSignal ??
     (options.timeoutMs !== undefined ? AbortSignal.timeout(options.timeoutMs) : undefined);
+  const loopThreshold = options.loopRepeatThreshold ?? 3;
+  const softDeadline =
+    options.softTimeoutMs !== undefined ? Date.now() + options.softTimeoutMs : undefined;
+
+  let wrapUp = false;
+  let instructionAppended = false;
+  let lastSignature: string | undefined;
+  let repeatCount = 0;
+  // 失败时没有 `result`，用 onStepFinish 里的观测值兜底，避免把「跑了很多步」记成 0。
+  let stepsSeen = 0;
+  let tokensSeen = 0;
 
   let result;
   try {
@@ -202,11 +244,31 @@ export async function analyzeIssue(options: AnalyzeIssueOptions): Promise<Analys
       system: options.prompt.system,
       prompt: options.prompt.user,
       tools: options.tools,
-      stopWhen: stepCountIs(maxSteps),
+      // 未显式指定 maxSteps 时不按步数截断：循环由模型自然停止或软着陆结束。
+      stopWhen: options.maxSteps !== undefined ? stepCountIs(options.maxSteps) : () => false,
       // 关键：这里不能传 output。带上 response_format 会让网关丢弃 tool_calls。
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(abortSignal ? { abortSignal } : {}),
+      prepareStep: ({ messages }) => {
+        if (!wrapUp) {
+          return undefined;
+        }
+        const disableTools = { activeTools: [], toolChoice: 'none' as const };
+        if (instructionAppended) {
+          // 指令随 messages 覆盖向后传递，重复追加会污染上下文。
+          return disableTools;
+        }
+        instructionAppended = true;
+        return {
+          ...disableTools,
+          messages: [...messages, { role: 'user' as const, content: WRAP_UP_INSTRUCTION }],
+        };
+      },
       onStepFinish: (step) => {
+        stepsSeen = step.stepNumber + 1;
+        tokensSeen += step.usage.totalTokens
+          ?? (step.usage.inputTokens ?? 0) + (step.usage.outputTokens ?? 0);
+
         options.onStep?.({
           index: step.stepNumber,
           text: redactText(step.text),
@@ -215,6 +277,26 @@ export async function analyzeIssue(options: AnalyzeIssueOptions): Promise<Analys
             input: call.input,
           })),
         });
+
+        // 绕圈检测：连续 N 步的工具调用签名完全相同（工具名 + 参数）。
+        const signature = signatureOf(step.toolCalls);
+        if (signature === undefined) {
+          lastSignature = undefined;
+          repeatCount = 0;
+        } else if (signature === lastSignature) {
+          repeatCount += 1;
+        } else {
+          lastSignature = signature;
+          repeatCount = 1;
+        }
+        if (signature !== undefined && repeatCount >= loopThreshold) {
+          wrapUp = true;
+        }
+
+        // 软截止：到点后不再提供工具，逼模型用已有证据收尾。
+        if (softDeadline !== undefined && Date.now() >= softDeadline) {
+          wrapUp = true;
+        }
       },
     });
   } catch (error) {
@@ -226,64 +308,144 @@ export async function analyzeIssue(options: AnalyzeIssueOptions): Promise<Analys
         return {
           answer: recovered,
           profile: options.prompt.profile ?? '',
-          // SDK 抛错时拿不到步数；如实写 0，不猜。
-          steps: 0,
+          steps: stepsSeen,
           tokens: tokensOf(failure.usage),
           text: redactText(failure.text ?? ''),
           finishReason: failure.finishReason ?? 'unknown',
         };
       }
-      throw new AgentError(describeStructuredOutputFailure(error));
+      throw new AgentError(describeStructuredOutputFailure(error), {
+        steps: stepsSeen,
+        tokens: tokensSeen,
+      });
     }
     throw toModelError(error);
   }
 
   const explorationTokens = tokensOf(result.usage);
+  const explorationSteps = result.steps.length;
+  const text = result.text.trim();
 
   // 快速路径：模型在最后一轮直接给出了合法对象，不需要额外请求。
-  const direct = recoverFromText(result.text, AnswerSchema);
-  if (direct) {
-    return {
-      answer: direct,
-      profile: options.prompt.profile ?? '',
-      steps: result.steps.length,
-      tokens: explorationTokens,
-      text: redactText(result.text),
-      finishReason: result.finishReason,
-    };
+  if (text !== '') {
+    const direct = recoverFromText(text, AnswerSchema);
+    if (direct) {
+      return {
+        answer: direct,
+        profile: options.prompt.profile ?? '',
+        steps: explorationSteps,
+        tokens: explorationTokens,
+        text: redactText(result.text),
+        finishReason: result.finishReason,
+      };
+    }
   }
 
-  // 格式化路径：模型用散文收尾，或字段有轻微偏差。用一次无 tools 的请求收敛。
-  const formatted = await formatAnswer({
-    model: options.model,
-    source: result.text,
-    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
-    ...(abortSignal ? { abortSignal } : {}),
-  });
+  if (text === '' && explorationSteps === 0) {
+    throw new AgentError('探索阶段没有产出可用于格式化的文本', {
+      steps: 0,
+      tokens: explorationTokens.total,
+    });
+  }
+
+  // 格式化路径：散文收尾用文本；完全没有正文但跑过工具时，用完整消息历史收敛，
+  // 避免把已经完成的调研成果丢掉。
+  let formatted;
+  try {
+    formatted =
+      text !== ''
+        ? await formatAnswer({
+            model: options.model,
+            source: text,
+            ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+            ...(abortSignal ? { abortSignal } : {}),
+          })
+        : await formatAnswer({
+            model: options.model,
+            // 用累积消息（含每一步的工具调用与结果），而不是最后一步的 response.messages：
+            // 最后一步往往只有空正文，拿不到任何工具历史。
+            messages: [
+              ...result.responseMessages,
+              { role: 'user' as const, content: FORMAT_FROM_MESSAGES },
+            ],
+            ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+            ...(abortSignal ? { abortSignal } : {}),
+          });
+  } catch (error) {
+    if (error instanceof AgentError) {
+      // 把探索阶段的真实消耗补回去，供 result.json 记录。
+      throw new AgentError(error.message, {
+        steps: explorationSteps,
+        tokens: explorationTokens.total,
+      });
+    }
+    throw error;
+  }
 
   return {
     answer: formatted.answer,
     profile: options.prompt.profile ?? '',
     // steps 只统计探索阶段：格式化请求不是工具循环的一步。
-    steps: result.steps.length,
+    steps: explorationSteps,
     tokens: addTokens(explorationTokens, formatted.tokens),
     text: redactText(result.text),
     finishReason: result.finishReason,
   };
 }
 
+/** 软着陆时追加给模型的收尾指令。只要求「收尾」，不暗示结论内容。 */
+const WRAP_UP_INSTRUCTION = [
+  '停止调用工具。',
+  '基于上面已经获得的证据，立即给出最终 JSON 结论。',
+  '缺少证据的字段用保守值：confidence 取 low、partial 取 true，并在 notes 说明缺什么。',
+  '只输出一个 JSON 对象，不要解释，也不要再请求任何文件。',
+].join('\n');
+
+/** 无正文时，续写在工具历史之后的一条指令。 */
+const FORMAT_FROM_MESSAGES =
+  '请基于以上全部调查结果，输出最终的 JSON 结论，不要再调用工具。';
+
+/** 工具调用的稳定签名：工具名 + 参数（键排序后序列化）。 */
+function signatureOf(
+  toolCalls: ReadonlyArray<{ readonly toolName: string; readonly input: unknown }>,
+): string | undefined {
+  if (toolCalls.length === 0) {
+    return undefined;
+  }
+  return toolCalls
+    .map((call) => `${call.toolName}:${stableStringify(call.input)}`)
+    .join('|');
+}
+
+function stableStringify(value: unknown): string {
+  if (value === undefined) {
+    return 'undefined';
+  }
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value) ?? String(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableStringify).join(',')}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`)
+    .join(',')}}`;
+}
+
 /**
  * 格式化阶段的 system 提示词。
  *
- * 只做「文本 → 对象」的收敛，不引入新事实：探索阶段已经完成调查，这里再做判断会让
+ * 只做「证据 → 对象」的收敛，不引入新事实：探索阶段已经完成调查，这里再做判断会让
  * 结论脱离证据。
  */
 const FORMATTER_SYSTEM = [
-  '你是结构化输出格式化器。用户会给你一段已经完成的 issue 分析文本。',
-  '把这段文本整理成 JSON 对象，只输出对象本身，不要解释。',
+  '你是结构化输出格式化器。用户会给你一段已经完成的 issue 分析文本，或完整的调查对话。',
+  '把其中的结论整理成 JSON 对象，只输出对象本身，不要解释。',
   '规则：',
-  '- 只使用原文中出现的事实，不要新增、不要推测、不要补写代码细节。',
-  '- 原文缺失的字段用保守值：confidence 取 low，partial 取 true，notes 说明缺什么。',
+  '- 只使用已有证据，不要新增、不要推测、不要补写代码细节。',
+  '- 缺失的字段用保守值：confidence 取 low、partial 取 true，notes 说明缺什么。',
   '- issue_summary 至少写 1 条非空事实；确实没有事实时写「原文未提供可核对的事实」。',
   '- conclusion 与 root_cause 必须有实际内容，长度不少于 10 个字符。',
 ].join('\n');
@@ -314,13 +476,16 @@ function addTokens(left: TokenTotals, right: TokenTotals): TokenTotals {
 
 interface FormatAnswerOptions {
   readonly model: LanguageModel;
-  readonly source: string;
   readonly temperature?: number;
   readonly abortSignal?: AbortSignal;
+  /** 文本路径：把这段文本收敛成对象。 */
+  readonly source?: string;
+  /** 消息路径：探索阶段没有正文时，直接用完整的工具历史续写。 */
+  readonly messages?: readonly ModelMessage[];
 }
 
 /**
- * 把散文收敛成 `Answer`：一次请求，**不带 tools**，带 `response_format`。
+ * 把证据收敛成 `Answer`：一次请求，**不带 tools**，带 `response_format`。
  *
  * 之所以敢在这里用 `Output.object`：没有 tools 时网关不会出现「丢弃 tool_calls」的问题，
  * 而 `response_format` 正是这一阶段需要的能力。
@@ -328,8 +493,11 @@ interface FormatAnswerOptions {
 async function formatAnswer(
   options: FormatAnswerOptions,
 ): Promise<{ readonly answer: Answer; readonly tokens: TokenTotals }> {
-  const source = options.source.trim();
-  if (source === '') {
+  const source = options.source?.trim();
+  const messages = options.messages;
+  const useMessages = messages !== undefined && messages.length > 0;
+
+  if (!source && !useMessages) {
     throw new AgentError('探索阶段没有产出可用于格式化的文本');
   }
 
@@ -338,7 +506,9 @@ async function formatAnswer(
     result = await generateText({
       model: options.model,
       system: FORMATTER_SYSTEM,
-      prompt: source.slice(0, 60_000),
+      ...(useMessages
+        ? { messages: [...messages] }
+        : { prompt: (source ?? '').slice(0, 60_000) }),
       output: Output.object({ schema: AnswerSchema }),
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),

@@ -97,6 +97,10 @@ describe('analyzeIssue', () => {
     expect(call.model).toBe(MODEL);
     expect(call.system).toBe('system');
     expect(call.stopWhen).toBeDefined();
+    // 未传 maxSteps 时不按步数截断：stopWhen 恒为 false，循环靠自然停止/软着陆结束。
+    expect(typeof call.stopWhen).toBe('function');
+    expect((call.stopWhen as (options: unknown) => boolean)({ steps: [] })).toBe(false);
+    expect(call.prepareStep).toBeDefined();
     // 关键：探索阶段的请求体不能出现 output（它会变成 response_format，
     // 进而让部分网关丢弃 tool_calls）。
     expect(call.output).toBeUndefined();
@@ -133,14 +137,21 @@ describe('analyzeIssue', () => {
     expect(formatter.prompt).toBe('我先读了 README，结论是配方索引为空。');
   });
 
-  it('两阶段都无法产出合法 Answer 时抛 AgentError，而不是 network', async () => {
-    mocks.generateText.mockResolvedValue({
-      output: undefined,
-      steps: [{}],
-      usage: {},
-      text: 'plain',
-      finishReason: 'stop',
-    });
+  it('两阶段都无法产出合法 Answer 时抛 AgentError，并带上真实 steps 与 tokens', async () => {
+    mocks.generateText
+      .mockResolvedValueOnce({
+        steps: [{}, {}, {}],
+        usage: { inputTokens: 100, outputTokens: 40, totalTokens: 140 },
+        text: 'plain',
+        finishReason: 'stop',
+      })
+      .mockResolvedValueOnce({
+        output: undefined,
+        steps: [{}],
+        usage: { inputTokens: 7, outputTokens: 3, totalTokens: 10 },
+        text: 'still plain',
+        finishReason: 'stop',
+      });
 
     const failure = analyzeIssue({ model: MODEL, prompt: PROMPT, tools: {} });
 
@@ -148,6 +159,8 @@ describe('analyzeIssue', () => {
     await expect(failure).rejects.not.toMatchObject({ kind: 'network' });
     // 1 次探索 + 1 次格式化，不会重试。
     expect(mocks.generateText).toHaveBeenCalledTimes(2);
+    // 失败路径必须带上真实消耗：以前这里恒为 0，把「跑了 3 步」记成了 0。
+    await expect(failure).rejects.toMatchObject({ steps: 3, tokens: 140 });
   });
 
   it('上游 5xx 转成 upstream 错误', async () => {
@@ -166,6 +179,7 @@ describe('analyzeIssue', () => {
         stepNumber: 0,
         text: 'sk-abcdefghijklmnop1234',
         toolCalls: [{ toolName: 'read_file', input: { path: 'a.ts' } }],
+        usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
       });
       return {
         steps: [{}],
