@@ -188,6 +188,20 @@ describe('analyzeIssue 的结构化输出兜底', () => {
     expect(harness.count).toBe(1);
   });
 
+  it('单键包裹（{"answer": {...}}）也能解包恢复', async () => {
+    // 不少模型会把结果再包一层；只在包内对象能通过 schema 时才解包。
+    const harness = await provider(() => JSON.stringify({ answer: ANSWER }));
+
+    const outcome = await analyzeIssue({
+      model: modelFor(harness),
+      prompt: { system: 's', user: 'u' },
+      tools: EMPTY_TOOLS,
+    });
+
+    expect(outcome.answer.issue_type).toBe('bug');
+    expect(outcome.steps).toBe(0);
+  });
+
   it('JSON 合法但不符合 schema 时，失败原因带字段路径', async () => {
     // 关闭 structuredOutputs 时模型可能自行编一个形状；这里模拟这种「能解析、不合格」。
     const harness = await provider(() => JSON.stringify({ foo: 'bar' }));
@@ -201,6 +215,8 @@ describe('analyzeIssue 的结构化输出兜底', () => {
     await expect(failure).rejects.toBeInstanceOf(AgentError);
     // 摘要里给出 zod 的字段路径，便于直接判断是缺字段还是多了字段；不含模型正文。
     await expect(failure).rejects.toThrow(/issue_type|Unrecognized key/);
+    // 同时给出形状摘要（键名与类型），不含任何内容。
+    await expect(failure).rejects.toThrow(/keys=\[foo\]/);
     expect(harness.count).toBe(1);
   });
 });

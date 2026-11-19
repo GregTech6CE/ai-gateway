@@ -87,6 +87,38 @@ function validationIssues(error: unknown): string[] {
   });
 }
 
+/**
+ * 只描述输出的形状（键名与类型、文本长度），不回显内容——这段摘要会进入 result.json，
+ * 最终可能出现在公开的失败评论里。
+ */
+function shapeOf(error: unknown): string {
+  const raw = asErrorLike(error)?.text;
+  if (typeof raw !== 'string' || raw.trim() === '') {
+    return 'text=empty';
+  }
+  const trimmed = raw.trim();
+  const fenced = trimmed.startsWith('```') ? 'fenced ' : '';
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed) as unknown;
+  } catch {
+    return `${fenced}text len=${trimmed.length}`;
+  }
+  if (typeof parsed !== 'object' || parsed === null) {
+    return `${fenced}scalar ${typeof parsed}`;
+  }
+  if (Array.isArray(parsed)) {
+    return `${fenced}array len=${parsed.length}`;
+  }
+  const record = parsed as Record<string, unknown>;
+  const keys = Object.keys(record).slice(0, 8);
+  const types = keys.map((key) => {
+    const item = record[key];
+    return `${key}:${Array.isArray(item) ? 'array' : item === null ? 'null' : typeof item}`;
+  });
+  return `${fenced}json keys=[${keys.join(',')}] types=[${types.join(',')}]`;
+}
+
 /** 把任意错误收敛成一句可写进日志/失败评论的摘要，不含模型正文。 */
 export function describeStructuredOutputFailure(error: unknown): string {
   const name = nameOf(error) || 'UnknownError';
@@ -97,7 +129,8 @@ export function describeStructuredOutputFailure(error: unknown): string {
       ? `模型输出无法解析为结构化结论（${name} / ${causeName}）`
       : `模型输出无法解析为结构化结论（${name}）`;
   const issues = validationIssues(error);
-  return issues.length > 0 ? `${head}：${issues.join('; ')}`.slice(0, 300) : head;
+  const detail = issues.length > 0 ? `${head}：${issues.join('; ')}` : head;
+  return `${detail} [${shapeOf(error)}]`.slice(0, 400);
 }
 
 export interface StructuredOutputFailure {
@@ -154,6 +187,9 @@ export interface SafeParser<T> {
 /**
  * 兜底解析：模型把 JSON 包在说明文字或代码围栏里时，SDK 可能解析失败，但对象本身是
  * 合法的。这里用与 `classifyRelevance` 相同的策略再解析一次，并通过 schema 校验。
+ *
+ * 另外接受一种常见形态：`{"answer": {...}}` 这类单键包裹。只在「包内对象能通过校验」
+ * 时才解包，因此不会把真正不符合契约的输出放进来。
  */
 export function recoverFromText<T>(text: string | undefined, schema: SafeParser<T>): T | undefined {
   if (!text) {
@@ -164,5 +200,27 @@ export function recoverFromText<T>(text: string | undefined, schema: SafeParser<
     return undefined;
   }
   const parsed = schema.safeParse(raw);
-  return parsed.success ? parsed.data : undefined;
+  if (parsed.success) {
+    return parsed.data;
+  }
+  const unwrapped = unwrapSingleKey(raw);
+  if (unwrapped !== undefined) {
+    const inner = schema.safeParse(unwrapped);
+    if (inner.success) {
+      return inner.data;
+    }
+  }
+  return undefined;
+}
+
+function unwrapSingleKey(value: unknown): unknown {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const entries = Object.entries(value as Record<string, unknown>);
+  if (entries.length !== 1) {
+    return undefined;
+  }
+  const inner = entries[0]?.[1];
+  return typeof inner === 'object' && inner !== null ? inner : undefined;
 }
