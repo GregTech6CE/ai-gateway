@@ -14,6 +14,12 @@ import { z } from 'zod';
 
 import { toModelError } from './model-pool.ts';
 import type { ModelEntry } from './model-pool.ts';
+import {
+  describeStructuredOutputFailure,
+  extractJsonObject,
+  recoverFromText,
+  structuredOutputFailure,
+} from './output-errors.ts';
 
 /** 调用方显式传入的模型目标；不读环境变量，凭据由上层按阶段注入。 */
 export interface ModelTarget {
@@ -22,6 +28,13 @@ export interface ModelTarget {
   readonly model: string;
   readonly headers?: Record<string, string>;
   readonly providerName?: string;
+  /**
+   * provider 是否支持 JSON Schema 形式的 `response_format`，默认 `true`。
+   *
+   * 关掉时 `Output.object` 的 schema 不会下发，模型按自由文本作答——只有在网关确实
+   * 不支持时才应传 `false`，否则等于主动放弃结构化保证。
+   */
+  readonly supportsStructuredOutputs?: boolean;
 }
 
 /** 兼容 OpenAI Chat Completions 的 provider，`config/models.json` 里两个入口都属于这一类。 */
@@ -31,6 +44,7 @@ export function createChatModel(target: ModelTarget): LanguageModel {
     baseURL: target.baseUrl,
     apiKey: target.apiKey,
     headers: target.headers ?? {},
+    supportsStructuredOutputs: target.supportsStructuredOutputs ?? true,
   });
   return provider.chatModel(target.model);
 }
@@ -81,19 +95,6 @@ function clamp01(value: number): number {
     return 0;
   }
   return Math.min(1, Math.max(0, value));
-}
-
-/** 从模型输出里抓第一个 JSON 对象；抓不到就返回 undefined。 */
-function extractJsonObject(text: string): unknown {
-  const match = /\{[\s\S]*\}/.exec(text);
-  if (!match) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(match[0]) as unknown;
-  } catch {
-    return undefined;
-  }
 }
 
 /**
@@ -211,6 +212,28 @@ export async function analyzeIssue(options: AnalyzeIssueOptions): Promise<Analys
       },
     });
   } catch (error) {
+    // 「请求成功、但模型没按契约产出对象」不是传输故障：先试一次兜底解析，仍失败就抛
+    // AgentError 快速失败。绝不能交给 toModelError——那会变成 network 并触发 60s 重试，
+    // 还会把健康入口冷却数小时。
+    const failure = structuredOutputFailure(error);
+    if (failure) {
+      const recovered = recoverFromText(failure.text, AnswerSchema);
+      if (recovered) {
+        const usage = failure.usage;
+        const input = usage?.inputTokens ?? 0;
+        const output = usage?.outputTokens ?? 0;
+        return {
+          answer: recovered,
+          profile: options.prompt.profile ?? '',
+          // SDK 抛错时拿不到步数；如实写 0，不猜。
+          steps: 0,
+          tokens: { input, output, total: usage?.totalTokens ?? input + output },
+          text: redactText(failure.text ?? ''),
+          finishReason: failure.finishReason ?? 'unknown',
+        };
+      }
+      throw new AgentError(describeStructuredOutputFailure(error));
+    }
     throw toModelError(error);
   }
 

@@ -10,6 +10,11 @@ import { Output, generateText, type LanguageModel } from 'ai';
 
 import { AgentError } from './analyzer.ts';
 import { toModelError } from './model-pool.ts';
+import {
+  describeStructuredOutputFailure,
+  recoverFromText,
+  structuredOutputFailure,
+} from './output-errors.ts';
 
 /**
  * 草稿契约的唯一来源是 `@gt6ce/shared`：qqbot、agent-svc 与 github-svc 共用同一份
@@ -54,6 +59,16 @@ export async function draftIssue(options: DraftIssueOptions): Promise<IssueDraft
       ...(abortSignal ? { abortSignal } : {}),
     });
   } catch (error) {
+    // 与 analyzeIssue 一致：schema 未生效导致解析失败时，先拿模型原文兜底解析一次；
+    // 仍失败则抛 AgentError——契约问题不是入口故障，不能转成 network 去冷却入口。
+    const failure = structuredOutputFailure(error);
+    if (failure) {
+      const recovered = recoverFromText(failure.text, IssueDraftSchema);
+      if (recovered) {
+        return recovered;
+      }
+      throw new AgentError(describeStructuredOutputFailure(error));
+    }
     throw toModelError(error);
   }
 

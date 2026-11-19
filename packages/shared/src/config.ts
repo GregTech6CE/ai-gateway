@@ -149,6 +149,14 @@ export const ModelEndpointSchema = z
     model: z.string().min(1),
     headers: z.record(z.string(), z.string()).default({}),
     enabled: z.boolean().default(true),
+    /**
+     * 该入口是否支持 JSON Schema 形式的 `response_format`。
+     *
+     * 默认 `true`：绝大多数 OpenAI 兼容网关都支持。不支持时必须显式关掉，否则 provider
+     * 只会发一条 `unsupported responseFormat` 警告、schema 静默失效，模型按自由文本作答，
+     * 最终由 SDK 抛 `NoObjectGeneratedError`——看起来像网络故障，实际是配置问题。
+     */
+    structured_outputs: z.boolean().default(true),
   })
   .strict();
 

@@ -284,6 +284,7 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
         model: entry.model,
         headers: entry.headers,
         providerName: entry.provider,
+        supportsStructuredOutputs: entry.structured_outputs,
       }));
 
   const promptSource = { dir: dirs.prompts, profile: repoCfg.prompt_profile };

@@ -7,6 +7,9 @@ vi.mock('ai', () => ({
   generateText: mocks.generateText,
   Output: { object: (options: unknown) => ({ mode: 'object', options }) },
   stepCountIs: (count: number) => ({ kind: 'steps', count }),
+  // 见 analyzer.test.ts：本文件用鸭子类型构造结构化输出错误，这里只需占位。
+  NoObjectGeneratedError: { isInstance: () => false },
+  JSONParseError: { isInstance: () => false },
 }));
 
 const { AgentError } = await import('../src/analyzer.ts');

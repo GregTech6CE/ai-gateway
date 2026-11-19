@@ -18,6 +18,8 @@ import type {
   ModelsConfig,
 } from '@gt6ce/shared';
 
+import { isStructuredOutputError } from './output-errors.ts';
+
 /** 待机时长上限：超过一个月按一个月计，从未使用过的取同值。 */
 export const MAX_IDLE_SECONDS = 30 * 24 * 60 * 60;
 
@@ -345,6 +347,12 @@ export function toModelError(error: unknown): ModelError {
   }
   if (status !== undefined) {
     return new ModelError('upstream', status, retryAfterSeconds, detail);
+  }
+  // 结构化输出失败（模型没按 schema 作答）没有 statusCode，但请求本身是成功的：
+  // 归为 config 而非 network，避免调用方按网络故障做 60s 退避、把健康入口冷却数小时。
+  // `analyzeIssue` / `draftIssue` 已先行拦截并抛 AgentError，这里是给未来新增调用点的兜底。
+  if (isStructuredOutputError(error)) {
+    return new ModelError('config', 0, retryAfterSeconds, detail);
   }
   return new ModelError('network', 0, retryAfterSeconds, detail);
 }

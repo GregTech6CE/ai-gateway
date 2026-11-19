@@ -7,6 +7,10 @@ vi.mock('ai', () => ({
   generateText: mocks.generateText,
   Output: { object: (options: unknown) => ({ mode: 'object', options }) },
   stepCountIs: (count: number) => ({ kind: 'steps', count }),
+  // 结构化输出错误由 output-errors.ts 引用；本文件用鸭子类型构造，这里只提供占位，
+  // 避免 vite 的 mock 代理在解构缺失导出时抛错。
+  NoObjectGeneratedError: { isInstance: () => false },
+  JSONParseError: { isInstance: () => false },
 }));
 
 const { AgentError, analyzeIssue, classifyRelevance } = await import('../src/analyzer.ts');

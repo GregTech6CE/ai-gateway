@@ -73,6 +73,7 @@ export function createDraftExecutor(options: DraftExecutorOptions): DraftExecuto
     }
 
     let last: ModelError | undefined;
+    let lastContractError: AgentError | undefined;
     for (const entry of entries) {
       if (signal.aborted) {
         // 整体截止时间已到（TaskRunner 的 AbortController）。此时换入口只会让每个候选
@@ -93,6 +94,7 @@ export function createDraftExecutor(options: DraftExecutorOptions): DraftExecuto
             model: entry.model,
             headers: entry.headers,
             providerName: entry.provider,
+            supportsStructuredOutputs: entry.structured_outputs,
           }),
           system,
           user,
@@ -109,11 +111,17 @@ export function createDraftExecutor(options: DraftExecutorOptions): DraftExecuto
           // 整体截止时间在调用中到达：入口本身没有问题，记冷却会误伤下一次任务。
           break;
         }
+        if (error instanceof AgentError) {
+          // 请求成功、只是模型没按契约作答：入口没有故障，换下一个候选再试一次，
+          // 但不写冷却。全部失败时把 AgentError 抛给 runner，文案是「模型输出不符合契约」。
+          lastContractError = error;
+          continue;
+        }
         const modelError = toModelError(error);
         markFailure(health, entry, modelError, options.budgets.defaults.model_pool, now());
         last = modelError;
       }
     }
-    throw last ?? new AgentError('所有模型入口都不可用');
+    throw lastContractError ?? last ?? new AgentError('所有模型入口都不可用');
   };
 }
