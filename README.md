@@ -74,3 +74,4 @@ QQ 侧不直接接触模型与 GitHub：它调用两个内部 REST 服务，各�
 - [docs/jobs/bug-issue-analysis.md](docs/jobs/bug-issue-analysis.md)：bug issue 分析 job
 - [docs/qqbot.md](docs/qqbot.md)：QQ 机器人的凭据边界、命令与绑定配置
 - [docs/deploy.md](docs/deploy.md)：四容器隔离部署、出网白名单与运维
+- [docs/release.md](docs/release.md)：发布资产结构、`snapshot` 滚动发布与校验

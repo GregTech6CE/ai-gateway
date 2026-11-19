@@ -13,6 +13,7 @@
 | [jobs/bug-issue-analysis.md](jobs/bug-issue-analysis.md) | 一次 bug issue 分析经过哪些 job、产出什么、如何中止 |
 | [qqbot.md](qqbot.md) | QQ 机器人的凭据边界、命令、绑定配置与协议适配要点 |
 | [deploy.md](deploy.md) | 四容器编排、网络隔离、凭据矩阵、出网白名单与运维 |
+| [release.md](release.md) | 发布资产的结构、`snapshot` Release 的滚动规则与校验方式 |
 
 根 `AGENTS.md` 是改动约束与安全规则的入口，本目录的 `AGENTS.md` 只管文档写法。
 

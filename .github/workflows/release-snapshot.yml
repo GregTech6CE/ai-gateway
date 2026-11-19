@@ -1,0 +1,197 @@
+name: release-snapshot
+
+# 滚动快照发布：每次 push 到 master 重新打包 4 个应用，覆盖 tag 为 `snapshot` 的
+# Release 资产。固定 tag + `--clobber` 让下载地址稳定：
+#
+#   https://github.com/<owner>/<repo>/releases/download/snapshot/gt6-ci-<short>.tgz
+#
+# 顺序约束：先传 4 个 `.tgz`，全部成功后再覆盖 `SHASUMS256.txt`。反过来的话，清单
+# 会在一段时间内指向尚未传完（或仍是上一版）的资产，下载方校验必然失败。
+on:
+  push:
+    branches: [master]
+    paths-ignore:
+      - 'docs/**'
+      - '**/*.md'
+  workflow_dispatch:
+    inputs:
+      force_rebuild:
+        description: '同一 commit 已发布时仍重新构建并覆盖资产'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+# 发布写的是同一份 Release 资产清单，并发会互相覆盖。
+concurrency:
+  group: release-publish
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    # 只发布 master：手动在分支上触发不应改写 snapshot 的资产。
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    outputs:
+      publish: ${{ steps.decide.outputs.publish }}
+      short: ${{ steps.decide.outputs.short }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Decide whether this commit needs publishing
+        id: decide
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FORCE: ${{ inputs.force_rebuild || 'false' }}
+        run: |
+          set -euo pipefail
+          short=$(git rev-parse --short=7 HEAD)
+          echo "short=$short" >> "$GITHUB_OUTPUT"
+
+          publish=true
+          reason="新提交，需要发布"
+          if [ "$FORCE" != "true" ] && gh release view snapshot >/dev/null 2>&1; then
+            assets=$(gh release view snapshot --json assets --jq '.assets[].name')
+            complete=true
+            for name in \
+              "gt6-ci-${short}.tgz" \
+              "gt6-qqbot-${short}.tgz" \
+              "gt6-agent-svc-${short}.tgz" \
+              "gt6-github-svc-${short}.tgz" \
+              "SHASUMS256.txt"; do
+              if ! grep -qx "$name" <<<"$assets"; then
+                complete=false
+              fi
+            done
+            if [ "$complete" = "true" ]; then
+              publish=false
+              reason="snapshot 已包含 ${short} 的完整资产，跳过（force_rebuild=true 可重出）"
+            else
+              reason="snapshot 缺少 ${short} 的部分资产，重新发布"
+            fi
+          elif [ "$FORCE" = "true" ]; then
+            reason="force_rebuild=true，强制重出"
+          fi
+
+          echo "publish=$publish" >> "$GITHUB_OUTPUT"
+          echo "$reason"
+
+  release:
+    needs: prepare
+    if: needs.prepare.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      SHORT: ${{ needs.prepare.outputs.short }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Cache pnpm store
+        uses: actions/cache@v4
+        with:
+          path: common/temp/pnpm-store
+          key: pnpm-${{ hashFiles('common/config/rush/pnpm-lock.yaml') }}
+          restore-keys: pnpm-
+
+      - name: Install
+        run: node common/scripts/install-run-rush.js install
+
+      # 发布构建不读 build cache：避免把开发者机器或上一轮的部分产物打进资产。
+      - name: Clean rebuild
+        run: node common/scripts/install-run-rush.js rebuild
+
+      - name: Typecheck
+        run: node common/scripts/install-run-rush.js typecheck
+
+      - name: Test
+        run: node common/scripts/install-run-rush.js test
+
+      - name: Pack release artifacts
+        run: |
+          set -euo pipefail
+          node scripts/pack-release.mjs --out dist/release --hash "$SHORT"
+          ls -l dist/release
+
+      - name: Ensure snapshot release exists
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          if gh release view snapshot >/dev/null 2>&1; then
+            echo "snapshot Release 已存在，滚动覆盖资产"
+          else
+            gh release create snapshot \
+              --prerelease \
+              --title "snapshot" \
+              --notes "滚动快照：每次 master 构建覆盖 4 个应用的 .tgz 与 SHASUMS256.txt。"
+          fi
+
+      - name: Upload tarballs first
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload snapshot \
+            "dist/release/gt6-ci-${SHORT}.tgz" \
+            "dist/release/gt6-qqbot-${SHORT}.tgz" \
+            "dist/release/gt6-agent-svc-${SHORT}.tgz" \
+            "dist/release/gt6-github-svc-${SHORT}.tgz" \
+            --clobber
+
+      - name: Upload checksums last
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release upload snapshot "dist/release/SHASUMS256.txt" --clobber
+
+      # 文件名带 commit，不清理的话 release 会累积历史资产；只保留本次 4 个与清单。
+      - name: Prune stale assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          keep="gt6-ci-${SHORT}.tgz gt6-qqbot-${SHORT}.tgz gt6-agent-svc-${SHORT}.tgz gt6-github-svc-${SHORT}.tgz SHASUMS256.txt"
+          gh release view snapshot --json assets --jq '.assets[].name' | while read -r name; do
+            case " $keep " in
+              *" $name "*) continue ;;
+            esac
+            echo "删除旧资产：$name"
+            gh release delete-asset snapshot "$name" --yes
+          done
+
+      - name: Verify published assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          verify_dir="$RUNNER_TEMP/release-verify"
+          rm -rf "$verify_dir"
+          mkdir -p "$verify_dir"
+
+          download() {
+            for attempt in 1 2 3; do
+              if gh release download snapshot --dir "$verify_dir" --pattern "$1" --clobber; then
+                return 0
+              fi
+              echo "下载 $1 失败（第 $attempt 次），重试"
+              sleep 3
+            done
+            return 1
+          }
+
+          download SHASUMS256.txt
+          download "gt6-ci-*.tgz"
+
+          for app in gt6-ci gt6-qqbot gt6-agent-svc gt6-github-svc; do
+            grep -Eq "^[0-9a-f]{64}  ${app}-${SHORT}\.tgz$" "$verify_dir/SHASUMS256.txt"
+            echo "清单包含 ${app}-${SHORT}.tgz"
+          done
+
+          cd "$verify_dir"
+          sha256sum -c --ignore-missing SHASUMS256.txt

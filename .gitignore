@@ -18,6 +18,9 @@ common/autoinstallers/*/.npmrc
 dist/
 rush-logs/
 
+# 发布打包：本地产出的 `.tgz` 与清单不入库
+release/
+
 # 部署：实际配置与密钥文件不入库，只保留脱敏示例
 deploy/config/*.json
 !deploy/config/*.example.json

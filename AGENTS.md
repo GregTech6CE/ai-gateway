@@ -35,6 +35,7 @@
 | `apps/qqbot/` | QQ 机器人常驻进程：命令路由、群会话、RPC 客户端与优雅停机 |
 | `apps/agent-svc/` | 内部分析服务：任务队列、模型池调度、结构化草稿（`node:http`） |
 | `apps/github-svc/` | 内部写回服务：白名单、凭据扫描、标签清洗、幂等建 Issue（`node:http`） |
+| `scripts/` | 发布打包：把 4 个应用打成自包含 `.tgz` 并生成 `SHASUMS256.txt` |
 | `config/` | 仓库白名单、预算与模型池；`repos.json` 是授权的事实来源 |
 | `prompts/` | `common/` 通用规则，`repos/<profile>/` 仓库覆盖 |
 | `templates/` | 评论与调用方 workflow 模板 |
