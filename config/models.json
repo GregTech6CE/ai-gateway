@@ -19,8 +19,7 @@
           "headers": {
             "X-Response-Format": "openai"
           },
-          "enabled": true,
-          "structured_outputs": false
+          "enabled": true
         }
       ],
       "roles": {
