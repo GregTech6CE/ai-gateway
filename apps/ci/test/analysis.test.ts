@@ -184,10 +184,15 @@ describe('runAnalysis 遇到 AgentError', () => {
     expect(outcome.result.attempts).toBe(1);
     expect(sleep).not.toHaveBeenCalled();
 
-    // 3. 请求数 = 1 次相关性分类 + 1 次分析，没有第 2~6 次。
-    expect(harness.requests).toHaveLength(2);
+    // 3. 请求数 = 相关性分类 + 探索 + 1 次格式化，没有第 4~7 次重试。
+    expect(harness.requests).toHaveLength(3);
     expect(harness.requests[0]?.tools).toBeUndefined();
     expect(Array.isArray(harness.requests[1]?.tools)).toBe(true);
+    // 关键：探索请求不能带 response_format，否则网关会丢弃 tool_calls、循环当场结束。
+    expect(harness.requests[1]?.response_format).toBeUndefined();
+    // 格式化请求反过来：不带 tools，才允许带 response_format。
+    expect(harness.requests[2]?.tools).toBeUndefined();
+    expect(harness.requests[2]?.response_format).toBeDefined();
 
     // 4. 入口没有被判故障：没有 cooldown，也没有失败计数。
     const health = readHealth(dirs);

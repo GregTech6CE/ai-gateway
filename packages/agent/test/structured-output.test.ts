@@ -1,18 +1,22 @@
 /**
- * 结构化输出的集成测试：用本地 OpenAI 兼容假 provider 触发真实的
- * `NoObjectGeneratedError`，验证三件事。
+ * 两阶段分析器的集成测试：用本地 OpenAI 兼容假 provider 走真实的 AI SDK 路径。
  *
- * 1. `createChatModel` 是否把 `supportsStructuredOutputs` 真正传给了 provider
- *    （表现是请求体里有没有 `response_format.json_schema`）；
- * 2. `analyzeIssue` / `draftIssue` 能否从错误携带的原文里兜底解析出对象；
- * 3. 解析不出来时抛 `AgentError`，而不是 `ModelError('network')`。
+ * 覆盖的核心约束（来自 `api.cline.bot` 的实测行为）：
+ * 请求里一旦同时出现 `tools` 与 `response_format`，网关就不再填充 `message.tool_calls`，
+ * 而是把工具调用塞进 `message.content`。因此：
  *
- * 不用 `vi.mock('ai')`：本文件要覆盖的正是 SDK 的真实行为，打桩就测不到。
+ * 1. 探索阶段只传 `tools`，绝不传 `output`（不产生 `response_format`）；
+ * 2. 探索结束后先直接从最终文本解析 `Answer`（零额外请求）；
+ * 3. 解析不出来时，再用一次不带 `tools` 的请求做格式化。
+ *
+ * 不用 `vi.mock('ai')`：本文件要覆盖的正是 SDK 的真实请求与工具循环行为。
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
+import { tool } from 'ai';
 import { afterEach, describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import { AgentError, analyzeIssue, createChatModel, classifyRelevance } from '../src/analyzer.ts';
 import { draftIssue } from '../src/draft.ts';
@@ -44,6 +48,17 @@ const DRAFT = {
   labels: ['bug'],
 };
 
+interface ReplyToolCall {
+  readonly id: string;
+  readonly name: string;
+  readonly args: string;
+}
+
+interface Reply {
+  readonly content?: string | null;
+  readonly toolCalls?: readonly ReplyToolCall[];
+}
+
 interface Captured {
   readonly body: Record<string, unknown>;
 }
@@ -55,8 +70,14 @@ interface Harness {
   close(): Promise<void>;
 }
 
-/** 起一个只回一条 assistant 文本的 Chat Completions 假服务。 */
-async function startProvider(content: (body: Record<string, unknown>) => string): Promise<Harness> {
+/**
+ * 起一个按脚本回复的 Chat Completions 假服务。
+ *
+ * 脚本按请求序号消费；超出长度后重复最后一条，保证意外的额外请求不会静默通过。
+ */
+async function startProvider(
+  script: readonly Reply[] | ((body: Record<string, unknown>, index: number) => Reply),
+): Promise<Harness> {
   const captured: Captured[] = [];
 
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
@@ -66,17 +87,40 @@ async function startProvider(content: (body: Record<string, unknown>) => string)
     });
     req.on('end', () => {
       const body = raw === '' ? {} : (JSON.parse(raw) as Record<string, unknown>);
+      const index = captured.length;
       captured.push({ body });
-      const text = content(body);
+      const reply =
+        typeof script === 'function'
+          ? script(body, index)
+          : (script[Math.min(index, script.length - 1)] ?? { content: '' });
+
+      const toolCalls = reply.toolCalls ?? [];
+      const message = {
+        role: 'assistant',
+        content: reply.content ?? null,
+        ...(toolCalls.length > 0
+          ? {
+              tool_calls: toolCalls.map((call) => ({
+                id: call.id,
+                type: 'function',
+                function: { name: call.name, arguments: call.args },
+              })),
+            }
+          : {}),
+      };
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
         JSON.stringify({
-          id: 'chatcmpl-test',
+          id: `chatcmpl-test-${index}`,
           object: 'chat.completion',
           created: 0,
           model: 'test-model',
           choices: [
-            { index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' },
+            {
+              index: 0,
+              message,
+              finish_reason: toolCalls.length > 0 ? 'tool_calls' : 'stop',
+            },
           ],
           usage: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18 },
         }),
@@ -100,8 +144,10 @@ async function startProvider(content: (body: Record<string, unknown>) => string)
 
 const open: Harness[] = [];
 
-async function provider(content: (body: Record<string, unknown>) => string): Promise<Harness> {
-  const harness = await startProvider(content);
+async function provider(
+  script: readonly Reply[] | ((body: Record<string, unknown>, index: number) => Reply),
+): Promise<Harness> {
+  const harness = await startProvider(script);
   open.push(harness);
   return harness;
 }
@@ -120,110 +166,206 @@ function modelFor(harness: Harness, supportsStructuredOutputs?: boolean) {
   });
 }
 
-const EMPTY_TOOLS = {} as Record<string, never>;
+/** 一个最小可执行工具，用来驱动真实的工具循环。 */
+const TOOLS = {
+  read_file: tool({
+    description: '读取仓库中的文本文件',
+    inputSchema: z.object({ path: z.string() }),
+    execute: async ({ path }) => ({ path, content: 'README content' }),
+  }),
+};
 
-describe('createChatModel 的 structured outputs 开关', () => {
-  it('默认开启：请求体带 json_schema 形式的 response_format', async () => {
-    const harness = await provider(() => JSON.stringify(ANSWER));
-    const model = modelFor(harness);
+const READ_CALL: ReplyToolCall = {
+  id: 'call-1',
+  name: 'read_file',
+  args: JSON.stringify({ path: 'README.md' }),
+};
+
+describe('请求形状：tools 与 response_format 不同时出现', () => {
+  it('探索阶段带 tools，但不带 response_format', async () => {
+    const harness = await provider([{ content: JSON.stringify(ANSWER) }]);
 
     await analyzeIssue({
-      model,
+      model: modelFor(harness),
       prompt: { system: 's', user: 'u' },
-      tools: EMPTY_TOOLS,
+      tools: TOOLS,
     });
 
-    const body = harness.captured[0]?.body as { response_format?: { type?: string } };
-    expect(body.response_format?.type).toBe('json_schema');
+    const body = harness.captured[0]?.body as {
+      tools?: unknown;
+      response_format?: unknown;
+    };
+    expect(Array.isArray(body.tools)).toBe(true);
+    expect(body.response_format).toBeUndefined();
+    // 直接解析成功，不该有第二次请求。
+    expect(harness.count).toBe(1);
   });
 
-  it('显式关闭：退化为 schema-less 的 json_object，不再下发 json_schema', async () => {
-    const harness = await provider(() => JSON.stringify(ANSWER));
-    const model = modelFor(harness, false);
+  it('格式化阶段不带 tools，且使用 json_schema', async () => {
+    const harness = await provider([
+      { content: '我读了 README，结论是配方索引为空。' },
+      { content: JSON.stringify(ANSWER) },
+    ]);
 
     await analyzeIssue({
-      model,
+      model: modelFor(harness),
       prompt: { system: 's', user: 'u' },
-      tools: EMPTY_TOOLS,
+      tools: TOOLS,
     });
 
-    // 关闭后 SDK 只要求「输出是 JSON」，不传 schema —— 正是模型改用自由文本作答、
-    // 进而触发 NoObjectGeneratedError 的前提。这也是该开关只在网关确实不支持时才关的原因。
-    const body = harness.captured[0]?.body as { response_format?: { type?: string } };
-    expect(body.response_format?.type).toBe('json_object');
+    const formatter = harness.captured[1]?.body as {
+      tools?: unknown;
+      response_format?: { type?: string };
+    };
+    expect(formatter.tools).toBeUndefined();
+    expect(formatter.response_format?.type).toBe('json_schema');
+  });
+
+  it('关闭 structuredOutputs 时，格式化请求退化为 schema-less 的 json_object', async () => {
+    const harness = await provider([
+      { content: '我读了 README，结论是配方索引为空。' },
+      { content: JSON.stringify(ANSWER) },
+    ]);
+
+    await analyzeIssue({
+      model: modelFor(harness, false),
+      prompt: { system: 's', user: 'u' },
+      tools: TOOLS,
+    });
+
+    const formatter = harness.captured[1]?.body as { response_format?: { type?: string } };
+    expect(formatter.response_format?.type).toBe('json_object');
   });
 });
 
-describe('analyzeIssue 的结构化输出兜底', () => {
-  it('模型把 JSON 包在说明文字里时，用错误携带的原文兜底解析', async () => {
-    // schema 未生效时模型常这样作答：先一句人话，再贴 JSON。
-    const harness = await provider(() => `我已经完成调查。\n${JSON.stringify(ANSWER)}`);
+describe('两阶段行为', () => {
+  it('工具调用后直接给出合法 JSON：零额外请求，steps > 0', async () => {
+    const harness = await provider([
+      { toolCalls: [READ_CALL] },
+      { content: JSON.stringify(ANSWER) },
+    ]);
 
     const outcome = await analyzeIssue({
       model: modelFor(harness),
       prompt: { system: 's', user: 'u', profile: 'gregtech6' },
-      tools: EMPTY_TOOLS,
+      tools: TOOLS,
     });
 
     expect(outcome.answer.issue_type).toBe('bug');
-    expect(outcome.answer.labels).toEqual(['crash']);
-    // 兜底路径拿不到步数，如实写 0；正常路径不会出现 0。
-    expect(outcome.steps).toBe(0);
-    expect(outcome.tokens.total).toBe(18);
-    expect(outcome.finishReason).toBe('stop');
+    // 一次工具调用 + 一次最终回答 = 2 步。
+    expect(outcome.steps).toBe(2);
+    expect(outcome.tokens.total).toBe(36);
+    // 两次请求都带 tools，都不带 response_format。
+    expect(harness.count).toBe(2);
+    for (const item of harness.captured) {
+      const body = item.body as { tools?: unknown; response_format?: unknown };
+      expect(Array.isArray(body.tools)).toBe(true);
+      expect(body.response_format).toBeUndefined();
+    }
   });
 
-  it('纯散文无法解析时抛 AgentError，而不是 network 的 ModelError', async () => {
-    const harness = await provider(() => '我先看一下代码，稍后再给结论。');
-
-    const failure = analyzeIssue({
-      model: modelFor(harness),
-      prompt: { system: 's', user: 'u' },
-      tools: EMPTY_TOOLS,
-    });
-
-    await expect(failure).rejects.toBeInstanceOf(AgentError);
-    await expect(failure).rejects.toMatchObject({ name: 'AgentError' });
-    // 只有一次请求：AgentError 不会触发 SDK 或调用方的重试。
-    expect(harness.count).toBe(1);
-  });
-
-  it('单键包裹（{"answer": {...}}）也能解包恢复', async () => {
-    // 不少模型会把结果再包一层；只在包内对象能通过 schema 时才解包。
-    const harness = await provider(() => JSON.stringify({ answer: ANSWER }));
+  it('工具调用后用散文收尾：触发 1 次格式化请求并返回合法 Answer', async () => {
+    const harness = await provider([
+      { toolCalls: [READ_CALL] },
+      { content: '我先看了 README。结论：配方索引在加载顺序变化后没有重建。' },
+      { content: JSON.stringify(ANSWER) },
+    ]);
 
     const outcome = await analyzeIssue({
       model: modelFor(harness),
       prompt: { system: 's', user: 'u' },
-      tools: EMPTY_TOOLS,
+      tools: TOOLS,
     });
 
     expect(outcome.answer.issue_type).toBe('bug');
-    expect(outcome.steps).toBe(0);
+    // steps 只统计探索阶段（工具调用 + 散文收尾）。
+    expect(outcome.steps).toBe(2);
+    expect(harness.count).toBe(3);
+    const formatter = harness.captured[2]?.body as { tools?: unknown };
+    expect(formatter.tools).toBeUndefined();
   });
 
-  it('JSON 合法但不符合 schema 时，失败原因带字段路径', async () => {
-    // 关闭 structuredOutputs 时模型可能自行编一个形状；这里模拟这种「能解析、不合格」。
-    const harness = await provider(() => JSON.stringify({ foo: 'bar' }));
+  it('两阶段都无法产出合法 Answer 时抛 AgentError，且只发 3 次请求', async () => {
+    const harness = await provider([
+      { toolCalls: [READ_CALL] },
+      { content: '我先看了 README，还没形成结论。' },
+      { content: '仍然是散文，没有 JSON。' },
+    ]);
+
+    const failure = analyzeIssue({
+      model: modelFor(harness),
+      prompt: { system: 's', user: 'u' },
+      tools: TOOLS,
+    });
+
+    await expect(failure).rejects.toBeInstanceOf(AgentError);
+    await expect(failure).rejects.toMatchObject({ name: 'AgentError' });
+    // 1 次探索 + 1 次工具后续 + 1 次格式化，没有重试。
+    expect(harness.count).toBe(3);
+  });
+});
+
+describe('无工具调用时的直接解析', () => {
+  it('模型把 JSON 包在说明文字里时，直接从最终文本解析（零额外请求）', async () => {
+    const harness = await provider([{ content: `我已经完成调查。\n${JSON.stringify(ANSWER)}` }]);
+
+    const outcome = await analyzeIssue({
+      model: modelFor(harness),
+      prompt: { system: 's', user: 'u', profile: 'gregtech6' },
+      tools: TOOLS,
+    });
+
+    expect(outcome.answer.issue_type).toBe('bug');
+    expect(outcome.steps).toBe(1);
+    expect(harness.count).toBe(1);
+  });
+
+  it('单键包裹（{"answer": {...}}）也能解包恢复', async () => {
+    const harness = await provider([{ content: JSON.stringify({ answer: ANSWER }) }]);
+
+    const outcome = await analyzeIssue({
+      model: modelFor(harness),
+      prompt: { system: 's', user: 'u' },
+      tools: TOOLS,
+    });
+
+    expect(outcome.answer.issue_type).toBe('bug');
+    expect(harness.count).toBe(1);
+  });
+
+  it('纯散文无法解析时，格式化一次仍失败即抛 AgentError', async () => {
+    const harness = await provider([{ content: '我先看一下代码，稍后再给结论。' }]);
+
+    const failure = analyzeIssue({
+      model: modelFor(harness),
+      prompt: { system: 's', user: 'u' },
+      tools: TOOLS,
+    });
+
+    await expect(failure).rejects.toBeInstanceOf(AgentError);
+    // 脚本复用到最后一条，因此两次都是散文。
+    expect(harness.count).toBe(2);
+  });
+
+  it('JSON 合法但不符合 schema 时，失败原因带字段路径与形状摘要', async () => {
+    const harness = await provider([{ content: JSON.stringify({ foo: 'bar' }) }]);
 
     const failure = analyzeIssue({
       model: modelFor(harness, false),
       prompt: { system: 's', user: 'u' },
-      tools: EMPTY_TOOLS,
+      tools: TOOLS,
     });
 
     await expect(failure).rejects.toBeInstanceOf(AgentError);
-    // 摘要里给出 zod 的字段路径，便于直接判断是缺字段还是多了字段；不含模型正文。
     await expect(failure).rejects.toThrow(/issue_type|Unrecognized key/);
-    // 同时给出形状摘要（键名与类型），不含任何内容。
     await expect(failure).rejects.toThrow(/keys=\[foo\]/);
-    expect(harness.count).toBe(1);
+    expect(harness.count).toBe(2);
   });
 });
 
 describe('draftIssue 的结构化输出兜底', () => {
   it('从说明文字中兜底解析出草稿', async () => {
-    const harness = await provider(() => `整理结果如下：\n${JSON.stringify(DRAFT)}`);
+    const harness = await provider([{ content: `整理结果如下：\n${JSON.stringify(DRAFT)}` }]);
 
     const draft = await draftIssue({
       model: modelFor(harness),
@@ -235,7 +377,7 @@ describe('draftIssue 的结构化输出兜底', () => {
   });
 
   it('无法解析时抛 AgentError', async () => {
-    const harness = await provider(() => '这个 issue 看起来是崩溃。');
+    const harness = await provider([{ content: '这个 issue 看起来是崩溃。' }]);
 
     await expect(
       draftIssue({ model: modelFor(harness), system: 's', user: 'u' }),
@@ -269,9 +411,9 @@ describe('toModelError 的防御性分类', () => {
 
 describe('classifyRelevance 不受影响', () => {
   it('纯文本分类仍然可用（没有 response_format 依赖）', async () => {
-    const harness = await provider(() =>
-      JSON.stringify({ relevance: 'in_scope', confidence: 0.9, reason: '缺陷报告' }),
-    );
+    const harness = await provider([
+      { content: JSON.stringify({ relevance: 'in_scope', confidence: 0.9, reason: '缺陷报告' }) },
+    ]);
 
     const verdict = await classifyRelevance({
       model: modelFor(harness, false),
@@ -279,7 +421,6 @@ describe('classifyRelevance 不受影响', () => {
     });
 
     expect(verdict).toMatchObject({ relevance: 'in_scope', confidence: 0.9 });
-    // 轻量分类不传 tools、也不要 response_format。
     const body = harness.captured[0]?.body as { response_format?: unknown };
     expect(body.response_format).toBeUndefined();
   });

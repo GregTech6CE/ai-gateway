@@ -180,8 +180,14 @@ export interface AnalysisOutcome {
 /**
  * 产出结构化结论。
  *
- * `Output.object({ schema: AnswerSchema })` 让 provider 按 schema 约束输出，SDK 负责
- * 解析与校验；拿到 `undefined` 说明模型没有按契约收尾，按失败处理而不是猜默认值。
+ * 分两段执行，原因是实测约束：某些 OpenAI 兼容网关（`api.cline.bot`）一旦请求里同时出现
+ * `tools` 与 `response_format`，就**不再填充 `message.tool_calls`**，而是把工具调用序列化
+ * 进 `message.content`。SDK 据此认为模型没有调用工具，工具循环当场结束——分析退化成
+ * 「没有调查就作答」。因此这里保证：
+ *
+ * 1. 探索阶段只传 `tools`，绝不传 `output`（即不产生 `response_format`）；
+ * 2. 探索结束后先尝试从最终文本里解析 `Answer`；
+ * 3. 解析不出来时，再用**一次**不带 `tools` 的请求，把这段文本收敛成 `AnswerSchema`。
  */
 export async function analyzeIssue(options: AnalyzeIssueOptions): Promise<AnalysisOutcome> {
   const maxSteps = options.maxSteps ?? 60;
@@ -197,7 +203,7 @@ export async function analyzeIssue(options: AnalyzeIssueOptions): Promise<Analys
       prompt: options.prompt.user,
       tools: options.tools,
       stopWhen: stepCountIs(maxSteps),
-      output: Output.object({ schema: AnswerSchema }),
+      // 关键：这里不能传 output。带上 response_format 会让网关丢弃 tool_calls。
       ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
       ...(abortSignal ? { abortSignal } : {}),
       onStepFinish: (step) => {
@@ -212,22 +218,17 @@ export async function analyzeIssue(options: AnalyzeIssueOptions): Promise<Analys
       },
     });
   } catch (error) {
-    // 「请求成功、但模型没按契约产出对象」不是传输故障：先试一次兜底解析，仍失败就抛
-    // AgentError 快速失败。绝不能交给 toModelError——那会变成 network 并触发 60s 重试，
-    // 还会把健康入口冷却数小时。
+    // 没有 output 时不该出现 NoObjectGeneratedError；保留兜底是为了防 SDK 其他路径抛同类错误。
     const failure = structuredOutputFailure(error);
     if (failure) {
       const recovered = recoverFromText(failure.text, AnswerSchema);
       if (recovered) {
-        const usage = failure.usage;
-        const input = usage?.inputTokens ?? 0;
-        const output = usage?.outputTokens ?? 0;
         return {
           answer: recovered,
           profile: options.prompt.profile ?? '',
           // SDK 抛错时拿不到步数；如实写 0，不猜。
           steps: 0,
-          tokens: { input, output, total: usage?.totalTokens ?? input + output },
+          tokens: tokensOf(failure.usage),
           text: redactText(failure.text ?? ''),
           finishReason: failure.finishReason ?? 'unknown',
         };
@@ -237,22 +238,126 @@ export async function analyzeIssue(options: AnalyzeIssueOptions): Promise<Analys
     throw toModelError(error);
   }
 
-  const answer = result.output;
-  if (!answer) {
-    throw new AgentError('模型没有按契约产出结构化结论');
+  const explorationTokens = tokensOf(result.usage);
+
+  // 快速路径：模型在最后一轮直接给出了合法对象，不需要额外请求。
+  const direct = recoverFromText(result.text, AnswerSchema);
+  if (direct) {
+    return {
+      answer: direct,
+      profile: options.prompt.profile ?? '',
+      steps: result.steps.length,
+      tokens: explorationTokens,
+      text: redactText(result.text),
+      finishReason: result.finishReason,
+    };
   }
 
-  const usage = result.usage;
-  const input = usage.inputTokens ?? 0;
-  const output = usage.outputTokens ?? 0;
-  const total = usage.totalTokens ?? input + output;
+  // 格式化路径：模型用散文收尾，或字段有轻微偏差。用一次无 tools 的请求收敛。
+  const formatted = await formatAnswer({
+    model: options.model,
+    source: result.text,
+    ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+    ...(abortSignal ? { abortSignal } : {}),
+  });
 
   return {
-    answer,
+    answer: formatted.answer,
     profile: options.prompt.profile ?? '',
+    // steps 只统计探索阶段：格式化请求不是工具循环的一步。
     steps: result.steps.length,
-    tokens: { input, output, total },
+    tokens: addTokens(explorationTokens, formatted.tokens),
     text: redactText(result.text),
     finishReason: result.finishReason,
   };
+}
+
+/**
+ * 格式化阶段的 system 提示词。
+ *
+ * 只做「文本 → 对象」的收敛，不引入新事实：探索阶段已经完成调查，这里再做判断会让
+ * 结论脱离证据。
+ */
+const FORMATTER_SYSTEM = [
+  '你是结构化输出格式化器。用户会给你一段已经完成的 issue 分析文本。',
+  '把这段文本整理成 JSON 对象，只输出对象本身，不要解释。',
+  '规则：',
+  '- 只使用原文中出现的事实，不要新增、不要推测、不要补写代码细节。',
+  '- 原文缺失的字段用保守值：confidence 取 low，partial 取 true，notes 说明缺什么。',
+  '- issue_summary 至少写 1 条非空事实；确实没有事实时写「原文未提供可核对的事实」。',
+  '- conclusion 与 root_cause 必须有实际内容，长度不少于 10 个字符。',
+].join('\n');
+
+interface TokenTotals {
+  readonly input: number;
+  readonly output: number;
+  readonly total: number;
+}
+
+function tokensOf(
+  usage:
+    | { readonly inputTokens?: number; readonly outputTokens?: number; readonly totalTokens?: number }
+    | undefined,
+): TokenTotals {
+  const input = usage?.inputTokens ?? 0;
+  const output = usage?.outputTokens ?? 0;
+  return { input, output, total: usage?.totalTokens ?? input + output };
+}
+
+function addTokens(left: TokenTotals, right: TokenTotals): TokenTotals {
+  return {
+    input: left.input + right.input,
+    output: left.output + right.output,
+    total: left.total + right.total,
+  };
+}
+
+interface FormatAnswerOptions {
+  readonly model: LanguageModel;
+  readonly source: string;
+  readonly temperature?: number;
+  readonly abortSignal?: AbortSignal;
+}
+
+/**
+ * 把散文收敛成 `Answer`：一次请求，**不带 tools**，带 `response_format`。
+ *
+ * 之所以敢在这里用 `Output.object`：没有 tools 时网关不会出现「丢弃 tool_calls」的问题，
+ * 而 `response_format` 正是这一阶段需要的能力。
+ */
+async function formatAnswer(
+  options: FormatAnswerOptions,
+): Promise<{ readonly answer: Answer; readonly tokens: TokenTotals }> {
+  const source = options.source.trim();
+  if (source === '') {
+    throw new AgentError('探索阶段没有产出可用于格式化的文本');
+  }
+
+  let result;
+  try {
+    result = await generateText({
+      model: options.model,
+      system: FORMATTER_SYSTEM,
+      prompt: source.slice(0, 60_000),
+      output: Output.object({ schema: AnswerSchema }),
+      ...(options.temperature !== undefined ? { temperature: options.temperature } : {}),
+      ...(options.abortSignal ? { abortSignal: options.abortSignal } : {}),
+    });
+  } catch (error) {
+    const failure = structuredOutputFailure(error);
+    if (failure) {
+      const recovered = recoverFromText(failure.text, AnswerSchema);
+      if (recovered) {
+        return { answer: recovered, tokens: tokensOf(failure.usage) };
+      }
+      throw new AgentError(describeStructuredOutputFailure(error));
+    }
+    throw toModelError(error);
+  }
+
+  const answer = result.output;
+  if (!answer) {
+    throw new AgentError('格式化阶段没有产出结构化结论');
+  }
+  return { answer, tokens: tokensOf(result.usage) };
 }

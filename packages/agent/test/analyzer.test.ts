@@ -77,12 +77,11 @@ describe('classifyRelevance', () => {
 });
 
 describe('analyzeIssue', () => {
-  it('返回结构化结论与用量', async () => {
+  it('探索阶段不传 output，直接解析最终文本并保留真实步数', async () => {
     mocks.generateText.mockResolvedValue({
-      output: ANSWER,
       steps: [{}, {}],
       usage: { inputTokens: 10, outputTokens: 20, totalTokens: 30 },
-      text: 'done',
+      text: JSON.stringify(ANSWER),
       finishReason: 'stop',
     });
 
@@ -97,11 +96,44 @@ describe('analyzeIssue', () => {
     const call = mocks.generateText.mock.calls[0]?.[0] as Record<string, unknown>;
     expect(call.model).toBe(MODEL);
     expect(call.system).toBe('system');
-    expect(call.output).toMatchObject({ mode: 'object' });
     expect(call.stopWhen).toBeDefined();
+    // 关键：探索阶段的请求体不能出现 output（它会变成 response_format，
+    // 进而让部分网关丢弃 tool_calls）。
+    expect(call.output).toBeUndefined();
+    expect(mocks.generateText).toHaveBeenCalledTimes(1);
   });
 
-  it('模型没有产出结构化结论时抛 AgentError', async () => {
+  it('散文收尾时发起一次无 tools 的格式化请求，并累加 token', async () => {
+    mocks.generateText
+      .mockResolvedValueOnce({
+        steps: [{}, {}, {}],
+        usage: { inputTokens: 100, outputTokens: 40, totalTokens: 140 },
+        text: '我先读了 README，结论是配方索引为空。',
+        finishReason: 'stop',
+      })
+      .mockResolvedValueOnce({
+        output: ANSWER,
+        steps: [{}],
+        usage: { inputTokens: 30, outputTokens: 10, totalTokens: 40 },
+        text: '',
+        finishReason: 'stop',
+      });
+
+    const outcome = await analyzeIssue({ model: MODEL, prompt: PROMPT, tools: {} });
+
+    expect(outcome.answer.issue_type).toBe('bug');
+    // steps 只统计探索阶段。
+    expect(outcome.steps).toBe(3);
+    expect(outcome.tokens).toEqual({ input: 130, output: 50, total: 180 });
+
+    const formatter = mocks.generateText.mock.calls[1]?.[0] as Record<string, unknown>;
+    expect(formatter.tools).toBeUndefined();
+    expect(formatter.output).toMatchObject({ mode: 'object' });
+    expect(String(formatter.system)).toContain('格式化');
+    expect(formatter.prompt).toBe('我先读了 README，结论是配方索引为空。');
+  });
+
+  it('两阶段都无法产出合法 Answer 时抛 AgentError，而不是 network', async () => {
     mocks.generateText.mockResolvedValue({
       output: undefined,
       steps: [{}],
@@ -109,9 +141,13 @@ describe('analyzeIssue', () => {
       text: 'plain',
       finishReason: 'stop',
     });
-    await expect(analyzeIssue({ model: MODEL, prompt: PROMPT, tools: {} })).rejects.toBeInstanceOf(
-      AgentError,
-    );
+
+    const failure = analyzeIssue({ model: MODEL, prompt: PROMPT, tools: {} });
+
+    await expect(failure).rejects.toBeInstanceOf(AgentError);
+    await expect(failure).rejects.not.toMatchObject({ kind: 'network' });
+    // 1 次探索 + 1 次格式化，不会重试。
+    expect(mocks.generateText).toHaveBeenCalledTimes(2);
   });
 
   it('上游 5xx 转成 upstream 错误', async () => {
@@ -132,10 +168,9 @@ describe('analyzeIssue', () => {
         toolCalls: [{ toolName: 'read_file', input: { path: 'a.ts' } }],
       });
       return {
-        output: ANSWER,
         steps: [{}],
         usage: { inputTokens: 1, outputTokens: 2, totalTokens: 3 },
-        text: '',
+        text: JSON.stringify(ANSWER),
         finishReason: 'stop',
       };
     });
