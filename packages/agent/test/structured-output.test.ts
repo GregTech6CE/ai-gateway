@@ -187,6 +187,22 @@ describe('analyzeIssue 的结构化输出兜底', () => {
     // 只有一次请求：AgentError 不会触发 SDK 或调用方的重试。
     expect(harness.count).toBe(1);
   });
+
+  it('JSON 合法但不符合 schema 时，失败原因带字段路径', async () => {
+    // 关闭 structuredOutputs 时模型可能自行编一个形状；这里模拟这种「能解析、不合格」。
+    const harness = await provider(() => JSON.stringify({ foo: 'bar' }));
+
+    const failure = analyzeIssue({
+      model: modelFor(harness, false),
+      prompt: { system: 's', user: 'u' },
+      tools: EMPTY_TOOLS,
+    });
+
+    await expect(failure).rejects.toBeInstanceOf(AgentError);
+    // 摘要里给出 zod 的字段路径，便于直接判断是缺字段还是多了字段；不含模型正文。
+    await expect(failure).rejects.toThrow(/issue_type|Unrecognized key/);
+    expect(harness.count).toBe(1);
+  });
 });
 
 describe('draftIssue 的结构化输出兜底', () => {

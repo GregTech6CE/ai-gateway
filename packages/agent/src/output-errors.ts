@@ -63,14 +63,41 @@ export function isStructuredOutputError(error: unknown): boolean {
   return isNoObjectGeneratedError(error) || isJsonParseError(error);
 }
 
+/**
+ * 从 `TypeValidationError` 的 cause 里取前几条 zod 校验问题。
+ *
+ * 只输出字段路径与 zod 的固定文案，不回显模型正文——这些内容会进入 result.json，
+ * 最终可能出现在公开的失败评论里。
+ */
+function validationIssues(error: unknown): string[] {
+  const cause = asErrorLike(error)?.cause;
+  const causeName = nameOf(cause);
+  if (causeName !== 'AI_TypeValidationError' && causeName !== 'TypeValidationError') {
+    return [];
+  }
+  const issues = (asErrorLike(asErrorLike(cause)?.cause) as { issues?: unknown } | undefined)?.issues;
+  if (!Array.isArray(issues)) {
+    return [];
+  }
+  return issues.slice(0, 3).flatMap((issue) => {
+    const record = issue as { path?: unknown; message?: unknown };
+    const path = Array.isArray(record.path) ? record.path.join('.') : '';
+    const message = typeof record.message === 'string' ? record.message : 'invalid';
+    return [`${path === '' ? '(root)' : path}: ${message}`];
+  });
+}
+
 /** 把任意错误收敛成一句可写进日志/失败评论的摘要，不含模型正文。 */
 export function describeStructuredOutputFailure(error: unknown): string {
   const name = nameOf(error) || 'UnknownError';
   const cause = asErrorLike(error)?.cause;
   const causeName = nameOf(cause);
-  return causeName && causeName !== name
-    ? `模型输出无法解析为结构化结论（${name} / ${causeName}）`
-    : `模型输出无法解析为结构化结论（${name}）`;
+  const head =
+    causeName && causeName !== name
+      ? `模型输出无法解析为结构化结论（${name} / ${causeName}）`
+      : `模型输出无法解析为结构化结论（${name}）`;
+  const issues = validationIssues(error);
+  return issues.length > 0 ? `${head}：${issues.join('; ')}`.slice(0, 300) : head;
 }
 
 export interface StructuredOutputFailure {

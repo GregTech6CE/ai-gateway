@@ -60,7 +60,32 @@
 
 ## 输出契约
 
-结构化输出由执行器负责，你只需在最后一轮给出对象。字段含义：
+最后一轮**只输出一个 JSON 对象**：不要代码围栏、不要前后说明文字、不要注释。对象里只允许
+出现下面列出的字段——多一个字段、少一个必填字段都会被判为不符合契约。
+
+```json
+{
+  "issue_type": "bug",
+  "issue_summary": ["事实 1", "事实 2", "事实 3"],
+  "conclusion": "一句话结论",
+  "root_cause": "机制说明",
+  "confidence": "high",
+  "confidence_reason": "证据与代码路径的对应关系",
+  "evidence": [{ "summary": "可复核的证据", "file": "src/a.ts", "line_start": 10, "line_stop": 12 }],
+  "user_advice": ["用户可执行动作"],
+  "fix_plan": ["具体改动"],
+  "ai_fix_hint": "可选：交给修复 AI 的最小上下文，纯文本",
+  "affected_versions": ["1.21.1"],
+  "labels": ["bug"],
+  "partial": false,
+  "notes": "可选补充"
+}
+```
+
+必填字段：除 `ai_fix_hint`、`affected_versions`、`notes` 之外的全部字段。`evidence`、
+`user_advice`、`fix_plan` 可以是空数组，但字段本身不能省略。
+
+字段含义：
 
 - `issue_type`：`bug` / `enhancement` / `rfc` / `unknown`，类型标签不要重复写进 `labels`。
 - `issue_summary`：3–6 条事实，覆盖版本、问题形态、现象与附件。
