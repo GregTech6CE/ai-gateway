@@ -233,7 +233,7 @@ describe('runGate', () => {
       join(dirs.inputs, 'model.json'),
     );
     expect(model?.analysis_entries.map((entry) => entry.id)).toEqual([
-      'mistral-deepseek',
+      'mistral-vibe',
       'clinepass-deepseek',
     ]);
   });

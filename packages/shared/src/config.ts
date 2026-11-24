@@ -140,11 +140,34 @@ export type TriageConfig = z.infer<typeof TriageConfigSchema>;
 export type RepoConfig = z.infer<typeof RepoConfigSchema>;
 export type ReposConfig = z.infer<typeof ReposConfigSchema>;
 
+/**
+ * ACP 驱动配置：如何拉起一个 ACP agent 进程。
+ *
+ * `command` 必须能在 `PATH` 中解析；`api_key_target_env` 指定把模型 key 注入子进程的
+ * 哪个环境变量，留空表示不注入（agent 自行处理鉴权）。`preset` 承载程序专属的目录与
+ * 配置准备，通用 ACP 接入保持 `generic`。
+ */
+export const AcpModelConfigSchema = z
+  .object({
+    command: z.string().min(1),
+    args: z.array(z.string()).default([]),
+    api_key_target_env: z.string().min(1).optional(),
+    preset: z.enum(['generic', 'mistral-vibe']).default('generic'),
+  })
+  .strict();
+
 export const ModelEndpointSchema = z
   .object({
     id: z.string().min(1),
     provider: z.string().min(1),
-    base_url: z.string().url(),
+    /**
+     * 出口协议：OpenAI 兼容 HTTP，或通过子进程讲 ACP。
+     *
+     * ACP 不走 `base_url`，也不支持 `response_format`；入口是否可用由命令能否解析与
+     * 握手结果决定。
+     */
+    driver: z.enum(['openai-compatible', 'acp']).default('openai-compatible'),
+    base_url: z.string().url().optional(),
     api_key_env: z.string().min(1),
     model: z.string().min(1),
     headers: z.record(z.string(), z.string()).default({}),
@@ -157,8 +180,35 @@ export const ModelEndpointSchema = z
      * 最终由 SDK 抛 `NoObjectGeneratedError`——看起来像网络故障，实际是配置问题。
      */
     structured_outputs: z.boolean().default(true),
+    acp: AcpModelConfigSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine((endpoint, ctx) => {
+    if (endpoint.driver === 'acp') {
+      if (!endpoint.acp) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['acp'],
+          message: 'driver 为 acp 时必须配置 acp 段',
+        });
+      }
+      return;
+    }
+    if (!endpoint.base_url) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['base_url'],
+        message: 'driver 为 openai-compatible 时 base_url 必填',
+      });
+    }
+    if (endpoint.acp) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['acp'],
+        message: 'acp 段仅在 driver 为 acp 时允许',
+      });
+    }
+  });
 
 export const ModelBindingSchema = z
   .object({
@@ -212,6 +262,7 @@ export const ModelsConfigSchema = z
   })
   .strict();
 
+export type AcpModelConfig = z.infer<typeof AcpModelConfigSchema>;
 export type ModelEndpoint = z.infer<typeof ModelEndpointSchema>;
 export type ModelBinding = z.infer<typeof ModelBindingSchema>;
 export type ModelPool = z.infer<typeof ModelPoolSchema>;

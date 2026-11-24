@@ -17,4 +17,6 @@ objects.githubusercontent.com
 
 # 模型池（config/models.json 里的 base_url 主机名）
 api.mistral.ai
+# Vibe 的 org config 端点在会话启动时读取；缺省主机名由 Vibe 固定为 chat.mistral.ai。
+chat.mistral.ai
 api.cline.bot

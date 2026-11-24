@@ -43,7 +43,8 @@
 | `docs/` | 授权、调度、QQ 机器人与部署的设计文档；写法受 `docs/AGENTS.md` 约束 |
 
 workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod`、AI SDK（`ai`、
-`@ai-sdk/openai-compatible`）与 QQ SDK（`@tencent-connect/qqbot-nodejs`，只在
+`@ai-sdk/openai-compatible`）、ACP SDK（`@agentclientprotocol/sdk`，只在
+`packages/agent`）与 QQ SDK（`@tencent-connect/qqbot-nodejs`，只在
 `packages/qqbot`）。两个内部 HTTP 服务只用 `node:http`，不引 Web 框架。
 测试与源码同包，用 vitest，不单独建 `tests/` 目录。
 
@@ -74,9 +75,10 @@ workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod`、AI SDK
 12. 内部服务的跨服务认证只接受 `Authorization: Bearer`，比对必须先哈希再
     `timingSafeEqual`；`/healthz` 是唯一的免鉴权路由，且只返回 `{ ok: true }`。
 
-`analysis` 内的模型执行步骤通过工具读取工作区，没有审批环节。它的隔离来自 job 边界——
-没有写 token、没有 App 私钥——以及 Zero-Secret bash 与出网白名单，**不是**来自沙箱或审批。
-不要用"沙箱会拦住"作为安全论证。
+`analysis` 内的 OpenAI 兼容入口通过工具读取工作区，没有审批环节；ACP 入口的工具链
+由子进程自带，客户端只通过 `session/request_permission` 放行只读工具、拒绝写入与
+命令执行。两种入口的隔离都来自 job 边界——没有写 token、没有 App 私钥——以及
+Zero-Secret bash 与出网白名单，**不是**来自沙箱或审批。不要用"沙箱会拦住"作为安全论证。
 
 ## 4. Workflow 修改规则
 

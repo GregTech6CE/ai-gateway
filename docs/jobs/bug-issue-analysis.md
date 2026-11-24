@@ -121,7 +121,8 @@ fetch ──> gate ──> analysis ──> finalize
 
 ### 执行流程
 
-1. `harden-runner` 打开出网白名单。
+1. 先恢复 uv 缓存并安装 `mistral-vibe`（需要 PyPI / Astral 出网），再由
+   `harden-runner` 打开出网白名单。
 2. 下载 `ci-bundle-<run_id>` 与 `gate-<run_id>`，恢复两个 mirror 缓存。
 3. 同步 mirror 并创建 worktree：`code/current` 指向主 ref，`code/<slug>` 为其余 ref，
    `code/golden` 为上游固定提交；任一 ref 不可用只跳过该目录。
@@ -130,12 +131,16 @@ fetch ──> gate ──> analysis ──> finalize
    `outputs/log_digest.md`。单个附件失败只记一行说明，不中断其余附件。
 6. `node dist/jobs/analysis.js`：
    1. 读 `inputs/model.json` 的候选顺序；缺 key 的入口记 `auth` 失败后跳过。
-   2. **preflight**：用一次轻量相关性分类判定入口可用；传输层错误计入健康度并换下一个，
-      分类结果不可解析只表示"这次没结论"，不判入口故障。
+   2. **preflight**：相关性分类优先使用 OpenAI 兼容入口，传输层错误计入健康度并换下一个，
+      分类结果不可解析只表示"这次没结论"，不判入口故障。池中没有 OpenAI 兼容入口时，
+      才用 ACP 入口做一次只读分类。`driver: "acp"` 的入口只检查命令能否解析，不发起
+      HTTP 请求。
    3. **拒绝判定**：命中 `reject.only` 且置信度不低于 `reject.min_confidence` 时，
       以 `rejected` 收尾，不再进入代码分析。
-   4. **代码分析**：只读工具与受控 `run_bash` 读取工作区，最终用
-      `Output.object({ schema: AnswerSchema })` 产出结构化结论。`auth`/`config` 错误
+   4. **代码分析**：OpenAI 兼容入口用只读工具与受控 `run_bash` 读取工作区，最终用
+      `Output.object({ schema: AnswerSchema })` 产出结构化结论；ACP 入口由子进程自带的
+      工具链执行，客户端在 `session/request_permission` 只放行只读工具，正文按
+      `AnswerSchema` 解析，软超时或绕圈时发送 `session/cancel`。`auth`/`config` 错误
       换下一个入口；`429`/`5xx`/网络错误按 `model_pool` 配置退避重试，逼近截止时间时
       直接失败。
    5. **扫描**：递归扫描 `outputs/`，命中的文件就地脱敏；`result.json` 序列化后单独扫描。

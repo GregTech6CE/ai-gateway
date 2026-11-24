@@ -18,6 +18,7 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@agentclientprotocol/sdk": "1.9.0",
     "@ai-sdk/openai-compatible": "3.0.92",
     "@gt6ce/shared": "workspace:*",
     "ai": "7.0.173",

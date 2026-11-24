@@ -99,6 +99,27 @@ export interface RelevanceVerdict {
   readonly evidence: string[];
 }
 
+/** 把模型文本收敛成相关性结论；不可解析或取值非法时返回 undefined。 */
+export function parseRelevanceVerdict(text: string): RelevanceVerdict | undefined {
+  const raw = extractJsonObject(text);
+  if (raw === undefined) {
+    return undefined;
+  }
+  const parsed = RelevancePayloadSchema.safeParse(raw);
+  if (!parsed.success) {
+    return undefined;
+  }
+  return {
+    relevance: parsed.data.relevance,
+    confidence: clamp01(parsed.data.confidence ?? 0),
+    reason: redactText(parsed.data.reason ?? '').slice(0, 800),
+    evidence: (parsed.data.evidence ?? [])
+      .filter((item): item is string => typeof item === 'string')
+      .map((item) => redactText(item).slice(0, 500))
+      .slice(0, 10),
+  };
+}
+
 export interface ClassifyRelevanceOptions {
   readonly model: LanguageModel;
   readonly prompt: PromptTemplate;
@@ -142,23 +163,7 @@ export async function classifyRelevance(
     throw toModelError(error);
   }
 
-  const raw = extractJsonObject(text);
-  if (raw === undefined) {
-    return undefined;
-  }
-  const parsed = RelevancePayloadSchema.safeParse(raw);
-  if (!parsed.success) {
-    return undefined;
-  }
-  return {
-    relevance: parsed.data.relevance,
-    confidence: clamp01(parsed.data.confidence ?? 0),
-    reason: redactText(parsed.data.reason ?? '').slice(0, 800),
-    evidence: (parsed.data.evidence ?? [])
-      .filter((item): item is string => typeof item === 'string')
-      .map((item) => redactText(item).slice(0, 500))
-      .slice(0, 10),
-  };
+  return parseRelevanceVerdict(text);
 }
 
 export interface AnalysisStep {

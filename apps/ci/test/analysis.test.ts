@@ -20,6 +20,21 @@ import { runAnalysis, type AnalysisEnv } from '../src/jobs/analysis.ts';
 import type { StageDirs } from '../src/common.ts';
 
 const REPO_ROOT = fileURLToPath(new URL('../../..', import.meta.url));
+const ACP_FIXTURE = join(REPO_ROOT, 'packages/agent/test/fixtures/fake-acp-server.mjs');
+
+const ANSWER = {
+  issue_type: 'bug',
+  issue_summary: ['合成器在加载时崩溃'],
+  conclusion: '合成器在加载阶段崩溃，原因是配方索引为空。',
+  root_cause: '配方索引在加载顺序变化后未重新构建。',
+  confidence: 'high',
+  confidence_reason: '崩溃日志与代码路径一致。',
+  evidence: [{ summary: '空指针', file: 'src/a.ts', line_start: 10 }],
+  user_advice: ['升级到最新版本'],
+  fix_plan: ['在加载完成后重建索引'],
+  labels: ['crash'],
+  partial: false,
+};
 
 interface Harness {
   readonly baseUrl: string;
@@ -31,7 +46,9 @@ interface Harness {
  * 假 provider：第一问是相关性分类（无 tools），第二问是 agent 分析（带 tools）。
  * 分析这一步故意只回散文，复现「schema 未生效、模型自由作答」的真实形态。
  */
-async function startProvider(): Promise<Harness> {
+async function startProvider(
+  analysisText = '我先看一下代码，稍后再给结论。',
+): Promise<Harness> {
   const requests: Array<Record<string, unknown>> = [];
 
   const handler = (req: IncomingMessage, res: ServerResponse): void => {
@@ -44,7 +61,7 @@ async function startProvider(): Promise<Harness> {
       requests.push(body);
       const hasTools = Array.isArray(body.tools) && body.tools.length > 0;
       const text = hasTools
-        ? '我先看一下代码，稍后再给结论。'
+        ? analysisText
         : JSON.stringify({ relevance: 'in_scope', confidence: 0.95, reason: '缺陷报告' });
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(
@@ -88,8 +105,12 @@ interface Fixture {
   readonly env: AnalysisEnv;
 }
 
-/** 复制仓库的真实 config/prompts，只用 model.json 把入口固定成一个。 */
-function makeFixture(baseUrl: string): Fixture {
+/** 复制仓库的真实 config/prompts，只用 model.json 把入口固定成给定集合。 */
+function makeFixture(
+  baseUrl: string,
+  extraEntries: Array<Record<string, unknown>> = [],
+  extraKeys: Record<string, string> = {},
+): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'gt6-analysis-'));
   tempDirs.push(root);
   cpSync(join(REPO_ROOT, 'config'), join(root, 'config'), { recursive: true });
@@ -114,6 +135,7 @@ function makeFixture(baseUrl: string): Fixture {
     join(root, 'inputs', 'model.json'),
     JSON.stringify({
       analysis_entries: [
+        ...extraEntries,
         {
           id: 'test-entry',
           provider: 'test',
@@ -142,7 +164,7 @@ function makeFixture(baseUrl: string): Fixture {
       REPO: 'gregtech6ce/gregtech6',
       ISSUE: '406',
       BOT_ENABLED: 'true',
-      MODEL_KEYS: { MODEL_KEY_TEST: 'test-key' },
+      MODEL_KEYS: { MODEL_KEY_TEST: 'test-key', ...extraKeys },
     },
   };
 }
@@ -211,4 +233,65 @@ describe('runAnalysis 遇到 AgentError', () => {
     expect(result).toMatchObject({ status: 'failed', attempts: 1, steps: 1 });
     expect(result.tokens).toBeGreaterThan(0);
   });
+});
+
+function acpEntry(recordPath: string): Record<string, unknown> {
+  return {
+    id: 'vibe-entry',
+    provider: 'mistral',
+    driver: 'acp',
+    api_key_env: 'MODEL_KEY_MISTRAL',
+    model: 'mistral-large-4-0',
+    role: 'analysis',
+    weight: 2,
+    acp: {
+      command: process.execPath,
+      args: [ACP_FIXTURE, 'exit-auth', recordPath],
+      preset: 'generic',
+    },
+  };
+}
+
+describe('runAnalysis 在 ACP 入口故障时切换', () => {
+  it(
+    '进程异常退出后切换到下一个 OpenAI 兼容入口',
+    { timeout: 30_000 },
+    async () => {
+      const harness = await startProvider(JSON.stringify(ANSWER));
+      open.push(harness);
+      const recordDir = mkdtempSync(join(tmpdir(), 'gt6-acp-failover-'));
+      tempDirs.push(recordDir);
+      const { dirs, env } = makeFixture(
+        harness.baseUrl,
+        [acpEntry(join(recordDir, 'record.json'))],
+        { MODEL_KEY_MISTRAL: 'acp-key' },
+      );
+
+      const outcome = await runAnalysis({
+        env,
+        dirs,
+        createModel: () =>
+          createChatModel({
+            baseUrl: harness.baseUrl,
+            apiKey: 'test-key',
+            model: 'test-model',
+            providerName: 'test',
+          }),
+      });
+
+      expect(outcome.status).toBe('complete');
+      expect(outcome.result.entry_id).toBe('test-entry');
+      expect(outcome.result.attempts).toBe(2);
+
+      const health = readHealth(dirs);
+      expect(health.endpoints?.['vibe-entry']?.status).toBe('cooldown');
+      expect(health.endpoints?.['test-entry']?.status).toBe('ok');
+
+      // 分类优先走 OpenAI 兼容入口，不消耗 ACP 会话。
+      const relevance = JSON.parse(
+        readFileSync(join(dirs.outputs, 'relevance.json'), 'utf8'),
+      ) as { entry_id?: string };
+      expect(relevance.entry_id).toBe('test-entry');
+    },
+  );
 });

@@ -3,16 +3,23 @@
     "shared": {
       "endpoints": [
         {
-          "id": "mistral-deepseek",
+          "id": "mistral-vibe",
           "provider": "mistral",
-          "base_url": "https://api.mistral.ai/v1",
+          "driver": "acp",
           "api_key_env": "MODEL_KEY_MISTRAL",
-          "model": "deepseek-v4-1-flash-1017",
+          "model": "mistral-large-4-0",
+          "acp": {
+            "command": "vibe-acp",
+            "args": [],
+            "api_key_target_env": "MISTRAL_API_KEY",
+            "preset": "mistral-vibe"
+          },
           "enabled": true
         },
         {
           "id": "clinepass-deepseek",
           "provider": "cline",
+          "driver": "openai-compatible",
           "base_url": "https://api.cline.bot/api/v1",
           "api_key_env": "MODEL_KEY_CLINEPASS",
           "model": "cline-pass/deepseek-v4.1-flash-1017",
@@ -25,7 +32,7 @@
       "roles": {
         "analysis": [
           {
-            "endpoint": "mistral-deepseek",
+            "endpoint": "mistral-vibe",
             "context": 1048576,
             "effort": "high",
             "weight": 120

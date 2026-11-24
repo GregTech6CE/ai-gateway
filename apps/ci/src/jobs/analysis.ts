@@ -18,9 +18,11 @@ import { join } from 'node:path';
 import {
   AgentError,
   ModelError,
+  acpCommandAvailable,
   analyzeIssue,
   candidates,
   classifyRelevance,
+  classifyRelevanceWithAcp,
   createChatModel,
   createCodeTools,
   loadPool,
@@ -29,10 +31,12 @@ import {
   markUsed,
   readHealthFile,
   retryWaitSeconds,
+  runAcpAnalysis,
   toModelError,
   writeHealthFile,
   type ModelEntry,
   type ModelFactory,
+  type AnalysisStep,
   type RelevanceVerdict,
 } from '@gt6ce/agent';
 import {
@@ -195,13 +199,21 @@ function normalizeEntries(entries: readonly ModelEntry[] | undefined): ModelEntr
   if (!entries) {
     return [];
   }
-  return entries.filter(
-    (entry) =>
-      typeof entry?.id === 'string' &&
-      typeof entry.base_url === 'string' &&
-      typeof entry.model === 'string' &&
-      typeof entry.api_key_env === 'string',
-  );
+  return entries
+    .filter((entry) => {
+      if (
+        typeof entry?.id !== 'string' ||
+        typeof entry.model !== 'string' ||
+        typeof entry.api_key_env !== 'string'
+      ) {
+        return false;
+      }
+      if (entry.driver === 'acp') {
+        return typeof entry.acp?.command === 'string' && entry.acp.command !== '';
+      }
+      return typeof entry.base_url === 'string';
+    })
+    .map((entry) => ({ ...entry, driver: entry.driver ?? 'openai-compatible' }));
 }
 
 /** 主流程。任何分支都经过 `finish`，保证 result.json 与健康状态一定落盘。 */
@@ -284,15 +296,19 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
 
   const createModel: ModelFactory =
     options.createModel ??
-    ((entry, apiKey) =>
-      createChatModel({
+    ((entry, apiKey) => {
+      if (!entry.base_url) {
+        throw new ModelError('config', 0, 0, `入口 ${entry.id} 缺少 base_url`);
+      }
+      return createChatModel({
         baseUrl: entry.base_url,
         apiKey,
         model: entry.model,
         headers: entry.headers,
         providerName: entry.provider,
         supportsStructuredOutputs: entry.structured_outputs,
-      }));
+      });
+    });
 
   const promptSource = { dir: dirs.prompts, profile: repoCfg.prompt_profile };
   let relevancePrompt: string;
@@ -310,10 +326,17 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
   const deadline = startedAt + budgets.l2.timeout_minutes * 60_000;
   const now = (): Date => new Date(Math.min(Date.now(), deadline));
 
-  // preflight：用一次轻量分类调用判定入口可用性。它发生在任何代码执行之前。
-  let chosen: ModelEntry | undefined;
+  // 分类优先走 OpenAI 兼容入口：轻量分类不值得启动 ACP 会话（会消耗 Vibe 专属额度）。
+  // 仅当池中完全没有 OpenAI 兼容入口时，才用 ACP 做一次只读分类。
+  const chatEntries = entries.filter(
+    (entry) => (entry.driver ?? 'openai-compatible') === 'openai-compatible',
+  );
+  const acpEntries = entries.filter((entry) => entry.driver === 'acp');
+  const failedPreflight = new Set<string>();
   let relevance: RelevanceVerdict | undefined;
-  for (const entry of entries) {
+  let relevanceEntryId = '';
+
+  for (const entry of chatEntries) {
     const apiKey = env.MODEL_KEYS[entry.api_key_env] ?? '';
     if (!apiKey) {
       markFailure(
@@ -324,10 +347,15 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
         now(),
       );
       log.warn('缺少 API key', { entry: entry.id, env: entry.api_key_env });
+      failedPreflight.add(entry.id);
       continue;
     }
     if (Date.now() >= deadline) {
       return finish('failed', 'deadline exceeded before preflight');
+    }
+    if (!entry.base_url) {
+      failedPreflight.add(entry.id);
+      continue;
     }
     try {
       relevance = await classifyRelevance({
@@ -345,6 +373,109 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
         status: modelError.status,
       });
       relevance = undefined;
+      failedPreflight.add(entry.id);
+      continue;
+    }
+    markUsed(health, entry, now());
+    relevanceEntryId = entry.id;
+    break;
+  }
+
+  if (chatEntries.length === 0) {
+    for (const entry of acpEntries) {
+      const apiKey = env.MODEL_KEYS[entry.api_key_env] ?? '';
+      if (!apiKey) {
+        markFailure(
+          health,
+          entry,
+          new ModelError('auth', 0, 0, 'missing key'),
+          budgets.model_pool,
+          now(),
+        );
+        log.warn('缺少 API key', { entry: entry.id, env: entry.api_key_env });
+        failedPreflight.add(entry.id);
+        continue;
+      }
+      if (!acpCommandAvailable(entry, process.env)) {
+        markFailure(
+          health,
+          entry,
+          new ModelError('config', 0, 0, `ACP 命令不可用: ${entry.acp?.command ?? ''}`),
+          budgets.model_pool,
+          now(),
+        );
+        log.warn('ACP 命令不可用，换下一个入口', { entry: entry.id });
+        failedPreflight.add(entry.id);
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        return finish('failed', 'deadline exceeded before preflight');
+      }
+      try {
+        relevance = await classifyRelevanceWithAcp({
+          entry,
+          apiKey,
+          cwd: dirs.code,
+          prompt: { system: relevancePrompt, user: relevanceText, profile: repoCfg.prompt_profile },
+          timeoutMs: budgets.relevance.timeout_seconds * 1000,
+          onStderrLine: (line) => log.info('acp stderr', { line }),
+        });
+      } catch (error) {
+        const modelError = toModelError(error);
+        markFailure(health, entry, modelError, budgets.model_pool, now());
+        log.warn('preflight 失败，换下一个入口', {
+          entry: entry.id,
+          kind: modelError.kind,
+          status: modelError.status,
+        });
+        relevance = undefined;
+        failedPreflight.add(entry.id);
+        continue;
+      }
+      markUsed(health, entry, now());
+      relevanceEntryId = entry.id;
+      break;
+    }
+  }
+
+  // 分析入口按池顺序取第一个可用者；ACP 只检查命令可执行，不做 HTTP 探活。
+  let chosen: ModelEntry | undefined;
+  for (const entry of entries) {
+    if (failedPreflight.has(entry.id)) {
+      continue;
+    }
+    const apiKey = env.MODEL_KEYS[entry.api_key_env] ?? '';
+    if (!apiKey) {
+      markFailure(
+        health,
+        entry,
+        new ModelError('auth', 0, 0, 'missing key'),
+        budgets.model_pool,
+        now(),
+      );
+      log.warn('缺少 API key', { entry: entry.id, env: entry.api_key_env });
+      failedPreflight.add(entry.id);
+      continue;
+    }
+    if (entry.driver === 'acp') {
+      if (!acpCommandAvailable(entry, process.env)) {
+        markFailure(
+          health,
+          entry,
+          new ModelError('config', 0, 0, `ACP 命令不可用: ${entry.acp?.command ?? ''}`),
+          budgets.model_pool,
+          now(),
+        );
+        log.warn('ACP 命令不可用，换下一个入口', { entry: entry.id });
+        failedPreflight.add(entry.id);
+        continue;
+      }
+      markUsed(health, entry, now());
+      chosen = entry;
+      break;
+    }
+    if (!entry.base_url) {
+      failedPreflight.add(entry.id);
       continue;
     }
     markUsed(health, entry, now());
@@ -358,15 +489,16 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
 
   if (relevance) {
     const classifiedAt = (options.now ?? new Date()).toISOString();
+    const classifiedBy = relevanceEntryId || chosen.id;
     writeJsonFile(join(dirs.outputs, 'relevance.json'), {
       ...relevance,
-      entry_id: chosen.id,
+      entry_id: classifiedBy,
       classified_at: classifiedAt,
     });
     log.info('相关性分类', {
       category: relevance.relevance,
       confidence: relevance.confidence,
-      entry: chosen.id,
+      entry: classifiedBy,
     });
     const only = new Set(repoCfg.reject.only.map((item) => item.toLowerCase()));
     if (only.has(relevance.relevance) && relevance.confidence >= repoCfg.reject.min_confidence) {
@@ -374,7 +506,7 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
         'rejected',
         `relevance ${relevance.relevance} confidence=${relevance.confidence.toFixed(2)}`,
         {
-          entry_id: chosen.id,
+          entry_id: classifiedBy,
           confidence: String(relevance.confidence),
           relevance: relevance.relevance,
         },
@@ -406,23 +538,51 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
       result.attempts += 1;
       markUsed(health, entry, now());
       try {
-        const outcome = await analyzeIssue({
-          model: createModel(entry, apiKey),
-          prompt: { system: systemPrompt, user: userPrompt, profile: repoCfg.prompt_profile },
-          tools,
-          timeoutMs: Math.max(5_000, deadline - Date.now()),
-          // 软截止比硬超时早 2 分钟：到点后禁用工具，给模型留出写结论的时间，
-          // 避免像以前那样撞步数上限、最后一步只有工具调用而没有正文。
-          softTimeoutMs: Math.max(5_000, deadline - Date.now() - WRAP_UP_RESERVE_MS),
-          loopRepeatThreshold: budgets.l2.loop_repeat_threshold,
-          temperature: 0,
-          onStep: (step) => {
-            log.info('agent step', {
-              index: step.index,
-              toolCalls: step.toolCalls.map((call) => call.name).join(','),
-            });
-          },
-        });
+        const prompt = {
+          system: systemPrompt,
+          user: userPrompt,
+          profile: repoCfg.prompt_profile,
+        };
+        // ACP 会话的 cwd 固定为 code/；inputs/ 与 outputs/ 作为附加工作区加入，
+        // 并在提示里说明两者的位置，避免按相对路径找不到。
+        const acpPrompt = {
+          ...prompt,
+          user: `${userPrompt}\n\nACP 会话说明：当前工作目录是 code/（其中 current 指向主分支工作树），golden 与历史版本也在此目录下；inputs/ 与 outputs/ 不在工作目录下，其绝对路径分别为 ${dirs.inputs}、${dirs.outputs}，已作为附加工作区加入会话。`,
+        };
+        const onStep = (step: AnalysisStep): void => {
+          log.info('agent step', {
+            index: step.index,
+            toolCalls: step.toolCalls.map((call) => call.name).join(','),
+          });
+        };
+        const timeoutMs = Math.max(5_000, deadline - Date.now());
+        // 软截止比硬超时早 2 分钟：到点后禁用工具，给模型留出写结论的时间，
+        // 避免像以前那样撞步数上限、最后一步只有工具调用而没有正文。
+        const softTimeoutMs = Math.max(5_000, deadline - Date.now() - WRAP_UP_RESERVE_MS);
+        const outcome =
+          entry.driver === 'acp'
+            ? await runAcpAnalysis({
+                entry,
+                apiKey,
+                prompt: acpPrompt,
+                cwd: dirs.code,
+                additionalDirectories: [dirs.inputs, dirs.outputs],
+                timeoutMs,
+                softTimeoutMs,
+                loopRepeatThreshold: budgets.l2.loop_repeat_threshold,
+                onStep,
+                onStderrLine: (line) => log.info('acp stderr', { line }),
+              })
+            : await analyzeIssue({
+                model: createModel(entry, apiKey),
+                prompt,
+                tools,
+                timeoutMs,
+                softTimeoutMs,
+                loopRepeatThreshold: budgets.l2.loop_repeat_threshold,
+                temperature: 0,
+                onStep,
+              });
         markSuccess(health, entry, now());
         writeJsonFile(join(dirs.outputs, 'answer.json'), outcome.answer);
         return finish('complete', 'accepted', {

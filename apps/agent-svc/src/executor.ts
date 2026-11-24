@@ -85,6 +85,11 @@ export function createDraftExecutor(options: DraftExecutorOptions): DraftExecuto
         // candidates 默认要求有 key；这里只是防御，正常不会走到。
         continue;
       }
+      if (entry.driver === 'acp' || !entry.base_url) {
+        // 本服务只支持 OpenAI 兼容入口；ACP 由 CI 执行层直接拉起。
+        last = new ModelError('config', 0, 0, `入口 ${entry.id} 不是 OpenAI 兼容入口`);
+        continue;
+      }
       markUsed(health, entry, now());
       try {
         const draft = await draftIssue({
