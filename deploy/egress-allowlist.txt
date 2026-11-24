@@ -1,9 +1,10 @@
-# 出网白名单：CI 的 harden-runner 与 Docker 侧的 egress-proxy 共用这一份清单。
+# 出网白名单：CI 的 harden-runner 使用这一份清单；Docker 侧的 egress-proxy 使用
+# egress-allowlist-docker.txt。
 # 只列域名，不带 scheme 与路径；端口由使用方统一按 443 处理。
 #
 # 增删任何一行都要同步
-# `.github/workflows/orchestrator.yml` 里 analysis job 的 allowed-endpoints，
-# 否则 CI 与容器侧的边界会漂移。
+# `GregTech6CE/.github` 里 ai-issue-runner.yml 的 analysis job allowed-endpoints，
+# 否则两处边界会漂移。
 
 # GitHub：代码克隆、artifact 下载与 API
 api.github.com

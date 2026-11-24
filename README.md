@@ -12,18 +12,26 @@
 
 ## 分析流程
 
-1. 调用方以 `workflow_dispatch` 提交 issue 仓库、编号与事件类型。
-2. `build`：优先拉取 `snapshot` Release 中已校验的 `gt6-ci` 包，未命中才安装依赖现场
-   构建；后续 job 只下载这一份 artifact。
-3. `gate`：只读校验仓库配置、issue 状态、触发者权限、`bot:v1:` 标记与 7 天超期，通过后
-   生成快照；显式 `force` 无视标记与时间窗口。
-4. `analysis`：按 issue 报告的版本检出代码、预取附件，再做相关性分类，然后由
-   `@gt6ce/agent`（Vercel AI SDK + 只读工具 + 受控 bash）产出结构化结论。
-5. `finalize`：确定性渲染、凭据扫描，写回占位评论与标签，并更新模型健康状态。
+执行器不在本仓库的 Actions 内运行。本仓只负责打包与发布，一次分析由两处组成：
 
-`finalize` 在 `analysis` 失败、超时或取消时仍会运行，负责回写失败结论。agent 步骤
+1. 业务仓的触发薄壳（`GregTech6CE/GregTech6` 的 `.github/workflows/ai-issue-trigger.yml`）
+   监听 issue 与评论事件，做防刷过滤后调用组织级执行层。
+2. 组织仓 `GregTech6CE/.github` 的 `ai-issue-runner.yml` 以 `workflow_call` 执行四个 job：
+   - `fetch`：检出本仓库的 `config/`、`prompts/`、`templates/`，从 `snapshot` Release
+     下载 `gt6-ci-*` 包并校验 `SHASUMS256.txt`；不安装依赖、不编译。
+   - `gate`：只读校验仓库配置、issue 状态、触发者权限、`bot:v1:` 标记与 7 天超期，
+     通过后生成快照；显式 `force` 无视标记与时间窗口。
+   - `analysis`：按 issue 报告的版本检出代码、预取附件，再做相关性分类，然后由
+     `@gt6ce/agent`（只读工具 + 受控 bash）产出结构化结论。
+   - `finalize`：确定性渲染、凭据扫描，以 `gt6ce-bot[bot]` 身份新建评论与标签，并更新
+     模型健康状态。
+
+`finalize` 在 `analysis` 失败、超时或取消时仍会运行，负责回写失败结论。分析步骤
 不持有写权限与 App 凭据；`run_bash` 只保留 `PATH`/`LANG`/`HOME`/`HTTP(S)_PROXY`，
 模型 key 不会进入子进程。
+
+本仓库的流水线只保留 `release-snapshot.yml`：`master` 每次构建把 4 个应用打成
+`.tgz` 并滚动覆盖 `snapshot` Release，供执行层下载。
 
 ## QQ 机器人
 
@@ -56,14 +64,17 @@ QQ 侧不直接接触模型与 GitHub：它调用两个内部 REST 服务，各�
 
 ## 密钥
 
-本仓库不含任何凭据。凭据只以 environment secret 与 repo variable 形式存在：
+本仓库不含任何凭据。执行层运行时由业务仓以 `secrets: inherit` 传入，且只在对应步骤的
+`env:` 里出现：
 
-- `llm` environment：`MODEL_KEY_MISTRAL`、`MODEL_KEY_CLINEPASS`
-- `writer` environment：`GT6CE_APP_PRIVATE_KEY`
-- repo variable：`GT6CE_APP_CLIENT_ID`、`BOT_ENABLED`、`MODEL_HEALTH`
+- secret：`MODEL_KEY_MISTRAL`、`MODEL_KEY_CLINEPASS`，只进入 `analysis.js` 步骤
+- secret：`GT6CE_APP_PRIVATE_KEY`，只进入 `finalize` 的 App 签发步骤
+- variable：`GT6CE_APP_CLIENT_ID`、`BOT_ENABLED`、`MODEL_HEALTH`，由 `gate` 与
+  `finalize` 读取
 
 **禁止向本仓库提交任何密钥、令牌或私钥**，包括文档、配置、测试数据与提交历史。
-本仓库是公开的，运行日志、输入与 artifact 同样公开。
+本仓库是公开的；运行发生在业务仓自己的 Actions 内，日志、输入与 artifact 的可见性
+跟随业务仓。
 
 ## 文档
 

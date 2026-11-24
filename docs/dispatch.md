@@ -1,89 +1,70 @@
 # 调度
 
-调用方是 issue 所在仓库的 workflow，本仓库是被调用方。两者之间只有一次
-`workflow_dispatch`，没有回调、没有共享文件系统。设计路径不做轮询：结论由本仓库的
-`finalize` 直接写回；`apps/ci` 的 `control finish` 保留轮询能力，但它是兼容路径，见文末。
+业务仓的触发薄壳通过一次 `workflow_call` 调用组织仓的执行层，全部 job 在同一次 run 内
+完成；本仓库只负责发布执行器包。触发与执行之间没有跨仓 dispatch、没有回调、没有共享
+文件系统。
+
+## 调用链
+
+| 层 | 位置 | 职责 |
+|---|---|---|
+| 触发层 | 业务仓的 `.github/workflows/ai-issue-trigger.yml` | 监听事件、防刷过滤、透传参数 |
+| 执行层 | `GregTech6CE/.github` 的 `ai-issue-runner.yml` | `fetch`、`gate`、`analysis`、`finalize` |
+| 执行器 | 本仓库的 `snapshot` Release | `gt6-ci-*.tgz` 与 `SHASUMS256.txt` |
+
+触发层决定"谁可以唤起分析"，执行层决定"能做什么、能写什么"。两者的权限都写在各自的
+workflow 文件里，不通过参数传递。
 
 ## 参数契约
 
-`orchestrator.yml` 的 inputs 全部是字符串，除 `repo`、`issue`、`event` 外都可省略。
+执行层的 inputs 全部是字符串：
 
 | input | 用途 | 约束 |
 |---|---|---|
-| `repo` | issue 仓库，`config/repos.json` 的键 | 必填；大小写不敏感匹配；未知即跳过 |
 | `issue` | issue 编号 | 必填；必须是编号，不是 URL 或标题 |
 | `event` | `issues` 或 `issue_comment` | 必填；决定是否校验触发评论 |
 | `comment_id` | 触发评论 id | `issue_comment` 时必填，`gate` 用它校验评论归属与作者 |
-| `placeholder_comment_id` | 调用方创建的占位评论 id | 供 `finalize` 原地 PATCH |
-| `request_id` | 调用方 run id | 用于把"本次请求"从历史标记中排除 |
+| `dry_run` | `true` 时抑制评论与标签写回 | `finalize` 仍渲染并更新 `MODEL_HEALTH` |
 | `force` | 主动强制 | `true` 时 `gate` 无视 `bot:v1:` 标记与 7 天窗口；仅由维护者的显式操作置位 |
-| `issue_title` | 仅用于 run 名称 | 不参与判定；不得用于构造路径或命令 |
-| `dry_run` | `true` 时抑制评论与标签写回 | `finalize` 仍会渲染并更新 `MODEL_HEALTH` |
+| `gateway_ref` | 执行器仓库的 ref | 默认 `master`；不解析为路径或命令 |
 
-约束来自 GitHub 平台，不来自本仓库的设计选择：`ref` 只接受分支或 tag 名而非提交 SHA，
-本仓库固定 `master`；单次 dispatch 最多 10 个 input；**inputs 是公开的**，因为本仓库
-公开且 run 页面可读。
+执行层不再接受 `repo` 参数：`github.repository` 就是 issue 所在仓库，`github.run_id`
+就是本次请求标识。仓库键仍以 `config/repos.json` 为准，未登记的仓库在 `gate` 跳过。
 
-推论：任何需要保密的内容都不能走 inputs。issue 正文、评论与附件由 `analysis` 通过
-公开 API 自行读取，不通过 dispatch 传递。
+`force_rebuild` 不存在：执行层只消费 `snapshot` 资产，不从源码现场构建。需要更新执行器
+时先让本仓库的发布流水线完成打包。
+
+约束来自 GitHub 平台：单次 `workflow_call` 最多 10 个 input，**inputs 与 run 页面公开
+可读**。任何需要保密的内容都不能走 inputs；issue 正文、评论与附件由 `analysis` 通过
+公开 API 自行读取。
 
 ## 职责划分
 
 | 动作 | 执行方 | 说明 |
 |---|---|---|
-| 等待稳定窗口 | 调用方 | 创建占位评论之前，issue 连续 60 秒无变化才继续 |
-| 创建占位评论 | 调用方 | 在 dispatch 之前，回传 `placeholder_comment_id` |
-| 更新占位评论链接 | 调用方 | dispatch 成功后立即 PATCH，把链接指向 B 的 run |
-| 校验与快照 | 本仓库 `gate` | 只读；不写 issue |
-| 分析 | 本仓库 `analysis` | 产出 artifact |
-| 渲染、扫描、写回 | 本仓库 `finalize` | 唯一写 issue 的位置 |
+| 事件过滤与防刷 | 触发层 | 全局开关、Bot 作者、维护者 `@bot` 评论 |
+| 执行器包下载与校验 | 执行层 `fetch` | 只读；不编译 |
+| 校验与快照 | 执行层 `gate` | 只读；不写 issue |
+| 分析 | 执行层 `analysis` | 产出 artifact；无写凭据 |
+| 渲染、扫描、写回 | 执行层 `finalize` | 唯一写 issue 的位置 |
 
-占位评论由调用方创建的原因：写权限只存在于调用方与本仓库 `finalize` 两处，而
-`finalize` 需要一条已存在的评论作为 PATCH 目标。占位评论同时承载 `requested` 标记，
-使 `gate` 能在并发窗口内识别在途请求。
-
-占位评论先指向调用方 run。dispatch 返回 `workflow_run_id` 后，调用方立即 PATCH 该评论，
-把链接换成执行仓库的 run。PATCH 前读取评论并确认仍带本次 `requested` 标记；若
-`finalize` 已写入结论则跳过，避免覆盖。更新失败只记日志，不影响已入队的分析，
-`finalize` 仍会在写回时再次 PATCH。
-
-`request_id` 解决的是同一个 issue 被重复触发时"把自己刚产生的标记误判为历史标记"的
-问题：与当前 `request_id` 相同的标记不计入幂等与配额判断。
-
-## 触发前去抖
-
-调用方在创建占位评论之前等待一个稳定窗口。窗口长度由 `DEBOUNCE_SECONDS` 控制，默认
-60 秒。窗口内 issue 的 `updated_at`、评论数或标题/正文哈希发生变化，就重新计时；连续
-稳定一个窗口才继续。上限由 `DEBOUNCE_MAX_SECONDS` 控制，默认 300 秒；达到上限后仍然
-dispatch，避免 issue 持续编辑把请求无限期挂起。
-
-`workflow_dispatch` 是人工触发，跳过该窗口。去抖发生在占位评论之前，因此 bot 自己的评论
-不会重置计时。窗口结束后重新执行一次 `precheck`，期间 issue 被关闭或标签不再匹配时放弃。
+触发层不创建占位评论，也不轮询结果：结论由 `finalize` 直接以新评论发布。写权限因此只
+存在于 `finalize` 的 App token 与触发层的 job 权限上，两者都不接触模型 key。
 
 ## run 语义
 
-- run 名称是 `<repo>#<issue> · <title>`，因此在 Actions 列表里可以直接区分来源。
-- 并发组按 `repo` 与 `issue` 划分，`cancel-in-progress: false`：同一 issue 的请求串行，
-  不互相取消，避免半途终止留下无法回写的状态。
-- `dry_run` 抑制评论与标签写回，`gate`、`analysis` 与渲染照常执行，产物照常上传，用于
-  评估改动。它不抑制 `MODEL_HEALTH` 的写回：该步骤无条件运行。关闭全局开关也不会跳过
-  `finalize`，已创建的占位评论仍会被清理；要避免任何运行，只能不发起 dispatch。
-- `finalize` 的条件是 `always() && needs.gate.result != 'skipped'`：`analysis` 失败、超时
-  或被取消都会进入 `finalize` 并回写失败结论。`gate` 判定 skip 时同样进入 `finalize`，
-  但此时没有结果产物，只做占位评论清理，不发布结论。
+- 并发组是 `ai-issue-<repo>-<issue>`，`cancel-in-progress: false`：同一 issue 的请求
+  串行，不互相取消，避免半途终止留下无法回写的状态。
+- `dry_run` 抑制评论与标签写回，`fetch`、`gate`、`analysis` 与渲染照常执行，产物照常
+  上传。它不抑制 `MODEL_HEALTH` 的写回：该步骤无条件运行。
+- `finalize` 的条件是 `always() && needs.gate.result != 'skipped'`：`analysis` 失败、
+  超时或被取消都会进入 `finalize` 并回写失败结论。`gate` 判定 skip 时也进入，但
+  `render` 不产出评论，写回随之跳过，issue 上不会留下任何写入。`fetch` 失败时没有可
+  回写的上下文，整次 run 直接失败。
+- 写回失败不改变 run 的结论：`render`、`write-back` 与 `update-health` 都是
+  `continue-on-error: true`，失败只体现在日志与 artifact 里。
 
-## 失败判定
+## 兼容路径
 
-调用方拿到 2xx 但响应里没有 `workflow_run_id` 时，视为未入队：workflow 可能被禁用，
-或 API 版本不返回 run 详情。此时应删除已创建的占位评论，避免留下永久"正在分析"。
-
-`404` 表示该 ref 上没有该 workflow，或 token 无权访问本仓库；`422` 表示 inputs 缺失或
-非法。`401`/`403` 与 App 私钥和 App 安装状态有关，属于凭据问题，不重试。
-
-占位评论的链接更新失败不算 dispatch 失败：B 已入队，`finalize` 会用 `B_RUN_URL` 再写一次。
-
-dispatch 成功后，调用方只更新自己创建的占位评论链接，写回层面的职责到此结束：结论只能
-由本仓库的 `finalize` 发布。
-`apps/ci` 的 `control` job 保留两个未在触发模板中启用的子命令：`finish` 轮询 run、下载
-artifact、在结果缺失时写 fallback `result.json`；`cleanup` 删除占位评论。当前模板只调用
-`start`，这两个子命令是兼容路径，启用它们不会获得写回权。
+`apps/ci` 的 `control` 子命令不再参与本链路：跨仓 dispatch 的 `start` 已没有目标工作流，
+`finish` 与 `cleanup` 仅作为历史脚本保留。启用它们不会获得写回权，本链路也不依赖它们。

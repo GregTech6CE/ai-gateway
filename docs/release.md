@@ -32,9 +32,10 @@ sha256sum -c --ignore-missing SHASUMS256.txt
 
 ## 消费方
 
-- **CI**：`orchestrator.yml` 的 `build` job 先按当前 `short` 尝试从 `snapshot` 下载
-  `gt6-ci-<short>.tgz`，校验通过后直接作为 `ci-bundle` 上传；未命中才回退到
-  `rush install` + `rush rebuild`。下游 job 只消费 artifact，不访问 Release。
+- **执行层**：`GregTech6CE/.github` 的 `ai-issue-runner.yml` 在 `fetch` job 下载
+  `SHASUMS256.txt`，按 `gt6-ci-[0-9a-f]{7,40}\.tgz` 解析包名，断言精确校验行通过后
+  再解包为 `ci-bundle` artifact。没有现场构建的回退路径：`snapshot` 缺资产或校验失败，
+  整次执行直接失败。
 - **Docker**：三个业务镜像的默认 `release` 阶段按 `ARTIFACT_SHORT` 下载并校验
   `gt6-<app>-<short>.tgz`，解包为 `/app/dist` 与 `/app/package.json`；
   `--target local` 改用本机 `dist`。约束与用法见 [deploy.md](deploy.md)。

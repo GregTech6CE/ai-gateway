@@ -9,7 +9,7 @@
 
 - 本仓库自身的代码、配置、模板与文档内容；
 - 公开仓库的 `owner/name`、公开 issue 与 PR 的可见内容；
-- 本仓库 workflow 中已经出现的 environment 名，以及 secret / variable 的**名称**。
+- 本仓库 workflow 中已经出现的 secret / variable 名称。
 
 禁止写入仓库的内容：
 
@@ -26,7 +26,7 @@
 
 | 路径 | 职责 |
 |---|---|
-| `.github/workflows/` | 唯一入口与 job 编排，权限与凭据边界都在这里 |
+| `.github/workflows/` | 只保留发布流水线；issue 分析的执行层在组织仓 `GregTech6CE/.github` |
 | `apps/ci/` | 各阶段 CLI：`gate`、`prefetch`、`manifest`、`analysis`、`render`、`write-back`、`control`、`update-health` |
 | `packages/shared/` | Zod 配置与答案契约、凭据扫描、结构化日志 |
 | `packages/github/` | GitHub REST 客户端、`bot:v1` 标记协议、六轴标签、渲染与写回 |
@@ -38,7 +38,7 @@
 | `scripts/` | 发布打包：把 4 个应用打成自包含 `.tgz` 并生成 `SHASUMS256.txt` |
 | `config/` | 仓库白名单、预算与模型池；`repos.json` 是授权的事实来源 |
 | `prompts/` | `common/` 通用规则，`repos/<profile>/` 仓库覆盖 |
-| `templates/` | 评论与调用方 workflow 模板 |
+| `templates/` | 评论模板：`comment.md`、`reject.md` |
 | `deploy/` | CI 与 Docker 两份出网白名单、Dockerfile、compose 编排与配置示例 |
 | `docs/` | 授权、调度、QQ 机器人与部署的设计文档；写法受 `docs/AGENTS.md` 约束 |
 
@@ -52,11 +52,11 @@ workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod`、AI SDK
 以下条件属于设计前提，改动不得破坏；确需变动时同步更新本文件与 `docs/`。
 
 1. `gate` 只读：不写 issue、不发评论、不持有 App token、不调用模型。
-2. 最终结论与标签的写回只发生在 `finalize`：独立 job、确定性代码、不运行 agent、不把
-   issue 正文当作指令。调用方只创建与清理占位评论。
-3. 凭据按 environment 隔离：模型 key 只进入 `analysis` 需要的步骤；App 私钥只进入
-   `finalize` 的签发步骤。两个 environment 不合并到同一 job。
-4. agent 步骤没有 issue 写权限，也没有触发本仓库 workflow 的凭据。
+2. 最终结论与标签的写回只发生在执行层的 `finalize`：独立 job、确定性代码、不运行模型、
+   不把 issue 正文当作指令。业务仓触发层只传参，不创建占位评论。
+3. 凭据按 job 与步骤隔离：模型 key 只进入 `analysis` 的 `analysis.js` 步骤；App 私钥
+   只进入 `finalize` 的签发步骤；两类凭据不进入同一个 job。
+4. 分析步骤没有 issue 写权限，也没有触发任何 workflow 的凭据。
 5. 未知仓库、配置缺失或配置非法一律 fail-closed，不得退化为"默认放行"。
 6. 触发参数与 issue 文本只当数据：不拼接进 shell 语句，不参与路径构造，不当作指令。
 7. 写回前必须经过凭据扫描；命中即阻断发布，只回一条拦截说明。
@@ -74,7 +74,7 @@ workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod`、AI SDK
 12. 内部服务的跨服务认证只接受 `Authorization: Bearer`，比对必须先哈希再
     `timingSafeEqual`；`/healthz` 是唯一的免鉴权路由，且只返回 `{ ok: true }`。
 
-`analysis` 内的 agent 通过工具读取工作区，没有审批环节。它的隔离来自 job 边界——
+`analysis` 内的模型执行步骤通过工具读取工作区，没有审批环节。它的隔离来自 job 边界——
 没有写 token、没有 App 私钥——以及 Zero-Secret bash 与出网白名单，**不是**来自沙箱或审批。
 不要用"沙箱会拦住"作为安全论证。
 
@@ -82,12 +82,13 @@ workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod`、AI SDK
 
 `.github/workflows/` 是风险最高的位置，每次改动逐条自查：
 
-- **事件**：只用 `workflow_dispatch`。禁止 `pull_request_target`、`workflow_run`，以及
+- **事件**：本仓库只保留发布流水线，事件面限定 `push` 与 `workflow_dispatch`；执行层
+  只以 `workflow_call` 暴露在组织仓。禁止 `pull_request_target`、`workflow_run`，以及
   任何会把不可信代码或不可信上下文带入持有凭据 job 的事件。
 - **权限**：顶层 `permissions` 保持最小；额外权限只在需要的 job 内声明，并确认该 job
-  不运行 agent、不接触不可信正文。
-- **秘密作用域**：只给真正需要的 job 声明 `environment`；secret 只在对应步骤的 `env:`
-  中出现，不在 job 级、不在顶层。
+  不运行模型、不接触不可信正文。
+- **秘密作用域**：secret 只在对应步骤的 `env:` 中出现，不在 job 级、不在顶层；模型 key
+  与 App 私钥不进入同一个 job。
 - **传参**：不可信文本（标题、正文、评论、inputs）只能经 `env:` 进入步骤，不得直接
   插值进 `run:`；避免 `${{ ... }}` 出现在 shell 语句内部。
 - **回显**：不打印环境变量全量，不用 `set -x`，不对携带凭据的请求用 `curl -v`，不把
@@ -109,7 +110,7 @@ workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod`、AI SDK
 | 状态伪造 | 手工复制隐藏标记 | 标记只用于被动触发的幂等判定，不作为授权依据；授权仍看仓库配置与作者协会 |
 | 供应链投毒 | 第三方 action、全局 npm 包 | 版本固定；权限最小；只在必要时引入 |
 | 附件炸弹 | 超大附件、zip 路径穿越 | 单文件与总量上限、条目绝对路径与 `..` 校验、文本后缀才进摘要 |
-| 可见性错配 | 公开仓处理私有 issue | `gate` 内的目标仓库可见性检查，不满足即跳过 |
+| 可见性错配 | 公开仓处理私有 issue | 执行层在业务仓自己的 run 内运行，issue 内容不进入公开执行器仓库 |
 | 状态伪造 | 手工复制隐藏标记 | 标记只用于幂等判定，不作为授权依据；授权仍看仓库配置与作者协会 |
 
 ## 6. 凭据处理

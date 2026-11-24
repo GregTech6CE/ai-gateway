@@ -8,8 +8,8 @@
 | 文件 | 回答的问题 |
 |---|---|
 | [AGENTS.md](AGENTS.md) | 文档怎么写：公开面约束、面向开发者的写法、Job 小节格式 |
-| [auth.md](auth.md) | 谁可以触发、触发被如何校验、本仓库可以写什么 |
-| [dispatch.md](dispatch.md) | 调用方与本仓库之间的参数契约、run 语义与失败判定 |
+| [auth.md](auth.md) | 谁可以触发、触发被如何校验、执行层可以写什么 |
+| [dispatch.md](dispatch.md) | 业务仓触发层与组织执行层之间的参数契约、run 语义与失败判定 |
 | [jobs/bug-issue-analysis.md](jobs/bug-issue-analysis.md) | 一次 bug issue 分析经过哪些 job、产出什么、如何中止 |
 | [qqbot.md](qqbot.md) | QQ 机器人的凭据边界、命令、绑定配置与协议适配要点 |
 | [deploy.md](deploy.md) | 四容器编排、网络隔离、凭据矩阵、出网白名单与运维 |
@@ -42,10 +42,12 @@ job 内部步骤写在各 job 文档。其余文档只引用，不复述。
    `inputs/code_manifest.json`；只列公开材料。
 2. 视需要新增 `prompts/repos/<profile>/` 覆盖，并把 `prompt_profile` 指向它；
    profile 名只允许 `[a-z0-9_-]`。
-3. 在调用方仓库放置触发 workflow，参数以 `templates/trigger.yml` 为准。
-4. 收敛写回权限：`finalize` 里的 App token 签发参数、App 安装范围与仓库可见性三者必须
-   同时覆盖新仓库，否则 `config/repos.json` 放行但写回 403。
-5. 确认该仓库公开：公开本仓库拒绝处理私有 issue 仓库。
+3. 在业务仓放置触发薄壳，参数以组织仓 `GregTech6CE/.github` 的 `ai-issue-runner.yml`
+   inputs 为准；执行层只以 `workflow_call` 暴露，本仓库不再提供触发模板。
+4. 收敛写回权限：App 安装范围、该仓库可用的组织 secret 与 `config/repos.json` 三者
+   必须同时覆盖新仓库，否则 `config/repos.json` 放行但写回 403。
+5. 确认该仓库在 `config/repos.json` 登记；执行与产物都在该仓库自己的 Actions 内，
+   运行日志与 artifact 跟随该仓库的可见性。
 
 新增模型 endpoint：
 
@@ -53,9 +55,10 @@ job 内部步骤写在各 job 文档。其余文档只引用，不复述。
    `model` 与 `headers`。只支持 OpenAI Chat Completions 兼容端点。
 2. 在 `roles.analysis` 增加绑定，给出 `context`、`effort` 与 `weight`；`weight` 决定相对
    调用频次（之比即长期选择次数之比），缺省为 1；待机时长按一个月封顶。
-3. 在 `llm` environment 补齐同名 secret；缺 key 时该 endpoint 被记为失败并跳过。
-4. 如果新端点不在 `deploy/egress-allowlist.txt` 里，同步添加域名，并更新
-   `.github/workflows/orchestrator.yml` 的 `allowed-endpoints`。
+3. 在业务仓可用的 secret 范围补齐同名 key；缺 key 时该 endpoint 被记为失败并跳过。
+4. 如果新端点不在 `deploy/egress-allowlist.txt` 里，同步添加域名，并更新组织仓
+   `GregTech6CE/.github` 的 `ai-issue-runner.yml` 中 `analysis` job 的
+   `allowed-endpoints`。
 5. 常驻服务也要用这个端点时，把域名加进 `deploy/egress-allowlist-docker.txt` 并重建
    `egress-proxy`，否则 `agent-svc` 的请求会在代理处被 403。
 
