@@ -708,7 +708,11 @@ class AcpSession {
         });
       }
     }
-    this.#cleanup();
+    try {
+      this.#cleanup();
+    } catch {
+      // 清理失败不应覆盖已完成的分析结果；临时目录残留交给系统回收。
+    }
   }
 }
 

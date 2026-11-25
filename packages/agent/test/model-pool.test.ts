@@ -193,6 +193,21 @@ describe('toModelError', () => {
     expect(toModelError(new Error('socket hang up')).kind).toBe('network');
   });
 
+  it('本地文件系统错误码归为 config', () => {
+    for (const code of ['EACCES', 'EPERM', 'ENOENT', 'ENOSPC', 'EROFS', 'ENOTDIR', 'EISDIR']) {
+      const error = Object.assign(new Error(`${code}: local filesystem failure`), { code });
+      expect(toModelError(error)).toMatchObject({ kind: 'config', status: 0 });
+    }
+  });
+
+  it('HTTP 状态码优先于文件系统错误码', () => {
+    const error = Object.assign(new Error('upstream failed'), {
+      statusCode: 503,
+      code: 'EACCES',
+    });
+    expect(toModelError(error).kind).toBe('upstream');
+  });
+
   it('已是 ModelError 时原样返回', () => {
     const error = new ModelError('upstream', 502, 0, 'boom');
     expect(toModelError(error)).toBe(error);

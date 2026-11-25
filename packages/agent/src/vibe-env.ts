@@ -5,7 +5,16 @@
  * 变量都不进入子进程。`mistral-vibe` preset 在临时目录生成隔离的 `VIBE_HOME`：
  * 关闭遥测，预信任工作区，并用只读 agent profile 收敛内置工具。
  */
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import type { Stats } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -111,6 +120,50 @@ const READONLY_AGENT = [
   '',
 ].join('\n');
 
+function lstatIfExists(target: string): Stats | undefined {
+  try {
+    return lstatSync(target);
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 为删除补齐权限：目录需要写与执行，文件需要写。
+ *
+ * 只使用 `lstatSync`，符号链接一律跳过，避免把权限改到链接目标上。
+ */
+function makeRemovable(target: string): void {
+  const stats = lstatIfExists(target);
+  if (!stats || stats.isSymbolicLink()) {
+    return;
+  }
+  if (stats.isDirectory()) {
+    try {
+      chmodSync(target, (stats.mode & 0o777) | 0o300);
+    } catch {
+      // 继续尝试子项；删除阶段仍会整体兜底
+    }
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(target);
+    } catch {
+      entries = [];
+    }
+    for (const entry of entries) {
+      makeRemovable(join(target, entry));
+    }
+    return;
+  }
+  if (stats.isFile()) {
+    try {
+      chmodSync(target, (stats.mode & 0o777) | 0o200);
+    } catch {
+      // 删除阶段仍会整体兜底
+    }
+  }
+}
+
 function writeVibeHome(cwd: string, model: string | undefined): string {
   const home = mkdtempSync(join(tmpdir(), 'gt6-vibe-'));
   mkdirSync(join(home, 'agents'), { recursive: true });
@@ -145,7 +198,12 @@ export function prepareAcpChildEnv(options: AcpChildEnvOptions): AcpChildEnv {
   return {
     env,
     cleanup: () => {
-      rmSync(home, { recursive: true, force: true });
+      try {
+        makeRemovable(home);
+        rmSync(home, { recursive: true, force: true });
+      } catch {
+        // 临时目录清理失败不应覆盖已完成的分析结果；残留交给系统回收。
+      }
     },
   };
 }

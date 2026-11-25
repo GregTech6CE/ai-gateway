@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { ModelsConfigSchema } from '@gt6ce/shared';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import {
   acpCommandAvailable,
@@ -16,6 +16,30 @@ import {
   runAcpAnalysis,
 } from '../src/acp-client.ts';
 import { bindings, loadPool, type ModelEntry } from '../src/model-pool.ts';
+
+const cleanupFailure = vi.hoisted(() => ({ enabled: false, calls: 0 }));
+
+vi.mock('../src/vibe-env.ts', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/vibe-env.ts')>();
+  return {
+    ...actual,
+    prepareAcpChildEnv: (...args: Parameters<typeof actual.prepareAcpChildEnv>) => {
+      const prepared = actual.prepareAcpChildEnv(...args);
+      return {
+        ...prepared,
+        cleanup: () => {
+          cleanupFailure.calls += 1;
+          prepared.cleanup();
+          if (cleanupFailure.enabled) {
+            throw Object.assign(new Error('EACCES: permission denied, unlink plugin.json'), {
+              code: 'EACCES',
+            });
+          }
+        },
+      };
+    },
+  };
+});
 
 const FIXTURE = fileURLToPath(new URL('./fixtures/fake-acp-server.mjs', import.meta.url));
 
@@ -40,6 +64,8 @@ interface Recorded {
 const tempDirs: string[] = [];
 
 afterEach(() => {
+  cleanupFailure.enabled = false;
+  cleanupFailure.calls = 0;
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -115,6 +141,32 @@ describe('runAcpAnalysis', () => {
         ],
         additionalDirectories: [dir],
       });
+    },
+  );
+
+  it(
+    '清理阶段抛错时仍返回分析结果',
+    { timeout: 15_000 },
+    async () => {
+      const dir = workDir();
+      const recordPath = join(dir, 'record.json');
+      const entry = entryFor('read-flow', recordPath);
+      cleanupFailure.enabled = true;
+      cleanupFailure.calls = 0;
+      try {
+        const outcome = await runAcpAnalysis({
+          entry,
+          apiKey: 'test-key',
+          prompt: PROMPT,
+          cwd: dir,
+          timeoutMs: 10_000,
+        });
+        expect(outcome.answer).toMatchObject({ issue_type: 'bug', confidence: 'high' });
+        expect(outcome.finishReason).toBe('end_turn');
+        expect(cleanupFailure.calls).toBeGreaterThan(0);
+      } finally {
+        cleanupFailure.enabled = false;
+      }
     },
   );
 

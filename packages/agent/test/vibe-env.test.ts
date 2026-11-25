@@ -1,4 +1,14 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -71,6 +81,37 @@ describe('prepareAcpChildEnv', () => {
       prepared.cleanup();
     }
     expect(existsSync(prepared.env.VIBE_HOME!)).toBe(false);
+  });
+
+  it('清理只读目录与只读文件，且不跟随符号链接', () => {
+    const cwd = workDir();
+    const external = join(cwd, 'external');
+    mkdirSync(external);
+    writeFileSync(join(external, 'keep.txt'), 'keep', 'utf8');
+
+    const prepared = prepareAcpChildEnv({
+      preset: 'mistral-vibe',
+      cwd,
+      baseEnv: { PATH: '/usr/bin' },
+    });
+    const home = prepared.env.VIBE_HOME;
+    expect(home).toBeTruthy();
+
+    const readonlyDir = join(home!, 'logs', 'session', 'plugins');
+    mkdirSync(readonlyDir, { recursive: true });
+    const readonlyFile = join(readonlyDir, 'plugin.json');
+    writeFileSync(readonlyFile, '{}', 'utf8');
+    chmodSync(readonlyFile, 0o444);
+    chmodSync(readonlyDir, 0o555);
+
+    const link = join(home!, 'external-link');
+    symlinkSync(external, link, process.platform === 'win32' ? 'junction' : 'dir');
+    const externalMode = lstatSync(external).mode & 0o777;
+
+    expect(() => prepared.cleanup()).not.toThrow();
+    expect(existsSync(home!)).toBe(false);
+    expect(readFileSync(join(external, 'keep.txt'), 'utf8')).toBe('keep');
+    expect(lstatSync(external).mode & 0o777).toBe(externalMode);
   });
 
   it('generic 只按 api_key_target_env 注入密钥，不创建 VIBE_HOME', () => {

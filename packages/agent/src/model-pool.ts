@@ -360,12 +360,35 @@ export function toModelError(error: unknown): ModelError {
     return new ModelError('upstream', status, retryAfterSeconds, detail);
   }
   // 结构化输出失败（模型没按 schema 作答）没有 statusCode，但请求本身是成功的：
-  // 归为 config 而非 network，避免调用方按网络故障做 60s 退避、把健康入口冷却数小时。
+  // 归为 config 而非 network，避免按网络故障做 60s 退避；调用方会直接切换入口。
   // `analyzeIssue` / `draftIssue` 已先行拦截并抛 AgentError，这里是给未来新增调用点的兜底。
   if (isStructuredOutputError(error)) {
     return new ModelError('config', 0, retryAfterSeconds, detail);
   }
+  // 本地文件系统错误不是网络故障：按 config 处理，调用方会直接切换入口而不是同入口重试。
+  const fsCode = fsErrorCodeOf(error);
+  if (fsCode !== undefined && FS_ERROR_CODES.has(fsCode)) {
+    return new ModelError('config', 0, 0, detail);
+  }
   return new ModelError('network', 0, retryAfterSeconds, detail);
+}
+
+const FS_ERROR_CODES = new Set<string>([
+  'EACCES',
+  'EPERM',
+  'ENOENT',
+  'ENOSPC',
+  'EROFS',
+  'ENOTDIR',
+  'EISDIR',
+]);
+
+function fsErrorCodeOf(error: unknown): string | undefined {
+  if (!error || typeof error !== 'object' || !('code' in error)) {
+    return undefined;
+  }
+  const code = (error as { readonly code?: unknown }).code;
+  return typeof code === 'string' ? code : undefined;
 }
 
 interface ApiErrorLike {
