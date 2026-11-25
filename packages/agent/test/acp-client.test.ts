@@ -65,6 +65,7 @@ function entryFor(scenario: string, recordPath: string): ModelEntry {
             acp: {
               command: process.execPath,
               args: [FIXTURE, scenario, recordPath],
+              api_key_target_env: 'FAKE_API_KEY',
               preset: 'generic',
             },
           },
@@ -137,6 +138,37 @@ describe('runAcpAnalysis', () => {
   );
 
   it(
+    '5xx 归类为 upstream、保留详情与真实步数',
+    { timeout: 15_000 },
+    async () => {
+      const dir = workDir();
+      const recordPath = join(dir, 'record.json');
+      const entry = entryFor('analysis-5xx', recordPath);
+      let caught: unknown;
+      try {
+        await runAcpAnalysis({
+          entry,
+          apiKey: 'test-key',
+          prompt: PROMPT,
+          cwd: dir,
+          timeoutMs: 10_000,
+        });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toMatchObject({
+        name: 'ModelError',
+        kind: 'upstream',
+        status: 503,
+        steps: 2,
+      });
+      const detail = (caught as { detail?: string }).detail ?? '';
+      expect(detail).toContain('503');
+      expect(detail).not.toContain('test-key');
+    },
+  );
+
+  it(
     '绕圈达到阈值时发送 session/cancel，并用无工具兜底收尾',
     { timeout: 15_000 },
     async () => {
@@ -170,7 +202,7 @@ describe('runAcpAnalysis', () => {
         apiKey: 'test-key',
         prompt: PROMPT,
         cwd: dir,
-        initTimeoutMs: 500,
+        initTimeoutMs: 1500,
         timeoutMs: 5_000,
       });
 

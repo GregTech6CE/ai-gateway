@@ -589,6 +589,40 @@ class AcpSession {
         }),
         'session/prompt',
       );
+      // 子进程异常退出时，SDK 可能把挂起请求收敛成正常响应而不是拒绝；
+      // 客户端没有发过取消却看到进程已退出，按进程失败处理，避免落入
+      // 格式化兜底掩盖真实错误。空正文时多等一个事件循环，覆盖退出事件稍晚到达。
+      if (!this.#cancelRequested) {
+        const processGone = (): boolean =>
+          this.#failure !== undefined ||
+          this.#exit !== undefined ||
+          this.#child.exitCode !== null;
+        const abnormalExit =
+          this.#exit !== undefined
+            ? this.#exit.code !== 0 || this.#exit.signal !== null
+            : this.#failure !== undefined;
+        if (processGone() && (abnormalExit || this.#turnText === '')) {
+          throw mapAcpFailure(
+            this.#failure ?? new Error('ACP 进程在响应后退出'),
+            this.#stderr(),
+            this.#exit,
+            'session/prompt',
+          );
+        }
+        if (this.#turnText === '') {
+          await new Promise<void>((resolve) => {
+            setTimeout(resolve, 50);
+          });
+          if (processGone()) {
+            throw mapAcpFailure(
+              this.#failure ?? new Error('ACP 进程在响应后退出'),
+              this.#stderr(),
+              this.#exit,
+              'session/prompt',
+            );
+          }
+        }
+      }
       if (response.usage) {
         this.#lastUsage = {
           input: response.usage.inputTokens,
@@ -604,6 +638,12 @@ class AcpSession {
     } catch (error) {
       if (this.#cancelRequested) {
         return { text: this.#turnText, stopReason: 'cancelled', tokens: this.#lastUsage };
+      }
+      if (error instanceof ModelError) {
+        throw new ModelError(error.kind, error.status, error.retryAfterSeconds, error.detail, {
+          steps: this.#steps,
+          ...(this.#lastUsage.total > 0 ? { tokens: this.#lastUsage.total } : {}),
+        });
       }
       throw error;
     } finally {
@@ -693,15 +733,22 @@ function mapAcpFailure(
     return new ModelError('config', 0, 0, detail);
   }
   const retryAfter = retryAfterOf(detail);
-  const status = /\b(401|402|403|429)\b/.exec(detail)?.[1];
-  if (status === '401' || status === '403') {
-    return new ModelError('auth', Number.parseInt(status, 10), retryAfter, detail);
+  const statusText = /\b([45]\d{2})\b/.exec(detail)?.[1];
+  const statusCode = statusText ? Number.parseInt(statusText, 10) : undefined;
+  if (statusCode === 401 || statusCode === 403) {
+    return new ModelError('auth', statusCode, retryAfter, detail);
   }
-  if (status === '402') {
+  if (statusCode === 402) {
     return new ModelError('auth', 402, retryAfter, detail);
   }
-  if (status === '429') {
+  if (statusCode === 429) {
     return new ModelError('rate', 429, retryAfter, detail);
+  }
+  if (statusCode !== undefined && statusCode >= 500) {
+    return new ModelError('upstream', statusCode, retryAfter, detail);
+  }
+  if (statusCode === 400 || statusCode === 404) {
+    return new ModelError('config', statusCode, retryAfter, detail);
   }
   if (/(quota|insufficient[_\s-]*(credit|funds)|billing)/i.test(detail)) {
     return new ModelError('auth', 402, retryAfter, detail);
@@ -711,6 +758,13 @@ function mapAcpFailure(
   }
   if (/(unauthori[sz]ed|forbidden|invalid[_\s-]*api[_\s-]*key|missing[_\s-]*\w*api[_\s-]*key)/i.test(detail)) {
     return new ModelError('auth', 401, retryAfter, detail);
+  }
+  if (
+    /(internal server error|bad gateway|service unavailable|gateway time-?out|upstream[^\n]{0,40}(error|failed|failure)|overloaded)/i.test(
+      detail,
+    )
+  ) {
+    return new ModelError('upstream', 0, retryAfter, detail);
   }
   if (exit !== undefined) {
     return new ModelError(

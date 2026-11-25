@@ -141,8 +141,10 @@ fetch ──> gate ──> analysis ──> finalize
       `Output.object({ schema: AnswerSchema })` 产出结构化结论；ACP 入口由子进程自带的
       工具链执行，客户端在 `session/request_permission` 只放行只读工具，正文按
       `AnswerSchema` 解析，软超时或绕圈时发送 `session/cancel`。`auth`/`config` 错误
-      换下一个入口；`429`/`5xx`/网络错误按 `model_pool` 配置退避重试，逼近截止时间时
-      直接失败。
+      换下一个入口；`429`/`5xx`/网络错误按 `model_pool` 配置退避重试，单入口重试耗尽
+      或剩余时间不足以退避时切换下一个入口，仅全部入口失败才整体失败。ACP 入口的
+      同入口重试上限由 `model_pool.acp_retries` 控制（默认 1，HTTP 入口仍用
+      `rate_limit_retries`）。
    5. **扫描**：递归扫描 `outputs/`，命中的文件就地脱敏；`result.json` 序列化后单独扫描。
    6. **闸门**：任一文件扫描失败时 `scan_upload=false`，只上传 `result.json`。
 
@@ -152,7 +154,7 @@ fetch ──> gate ──> analysis ──> finalize
 |---|---|
 | `outputs/answer.json` | `AnswerSchema` 结构化结论（仅 `complete`） |
 | `outputs/relevance.json` | 相关性分类（有结论时） |
-| `outputs/result.json` | 状态、原因、步数、token 用量、`secret_scan` |
+| `outputs/result.json` | 状态、原因、步数、token 用量、错误详情摘要（`error_detail`）、`secret_scan` |
 | `outputs/model_health.json` | 本轮更新后的 endpoint 健康状态 |
 | `outputs/log_digest.md` | 脱敏后的日志摘要 |
 

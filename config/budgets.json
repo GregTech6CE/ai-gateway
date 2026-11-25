@@ -21,6 +21,7 @@
       "late_base_minutes": 5,
       "late_max_minutes": 360,
       "rate_limit_retries": 5,
+      "acp_retries": 1,
       "rate_limit_wait_seconds": 60,
       "rate_limit_min_wait_seconds": 5,
       "rate_limit_max_wait_seconds": 300

@@ -31,12 +31,17 @@ export class ModelError extends Error {
   readonly status: number;
   readonly retryAfterSeconds: number;
   readonly detail: string;
+  /** 失败前已完成的工具步数；ACP 会话才有。 */
+  readonly steps?: number;
+  /** 失败前已消耗的 token；有上报时才有。 */
+  readonly tokens?: number;
 
   constructor(
     kind: ModelErrorKind,
     status = 0,
     retryAfterSeconds = 0,
     detail = '',
+    stats: { readonly steps?: number; readonly tokens?: number } = {},
   ) {
     super(`${kind} status=${status} ${detail}`.slice(0, 300));
     this.name = 'ModelError';
@@ -44,6 +49,12 @@ export class ModelError extends Error {
     this.status = status;
     this.retryAfterSeconds = retryAfterSeconds;
     this.detail = detail;
+    if (stats.steps !== undefined) {
+      this.steps = stats.steps;
+    }
+    if (stats.tokens !== undefined) {
+      this.tokens = stats.tokens;
+    }
   }
 }
 

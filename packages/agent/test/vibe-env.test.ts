@@ -45,6 +45,8 @@ describe('prepareAcpChildEnv', () => {
       expect(config).toContain('enable_auto_approve = false');
       expect(config).toContain('enable_connectors = false');
       expect(config).toContain('enable_mcp = false');
+      expect(config).toContain('enable_background_processes = false');
+      expect(config).toContain('enable_subagents = false');
       expect(config).toContain('default_approval_policy = "ask"');
       expect(config).toContain('outside_workdir = "deny"');
       expect(config).toContain('default_agent = "readonly"');
@@ -57,7 +59,9 @@ describe('prepareAcpChildEnv', () => {
       expect(trusted).toContain(JSON.stringify(resolve(cwd)));
 
       const agent = readFileSync(join(home!, 'agents', 'readonly.toml'), 'utf8');
-      expect(agent).toContain('enabled_tools = ["grep", "read_file", "skill"]');
+      // 3.1.4 没有 grep 工具，工具名不能写不存在的能力。
+      expect(agent).toContain('enabled_tools = ["read_file", "skill"]');
+      expect(agent).not.toContain('grep');
 
       expect(prepared.env.MISTRAL_API_KEY).toBe('vibe-secret');
       expect(prepared.env.IGNORED_FOR_PRESET).toBeUndefined();

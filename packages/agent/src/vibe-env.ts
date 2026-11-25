@@ -79,6 +79,8 @@ function vibeConfig(model: string | undefined): string {
     'enable_auto_approve = false',
     'enable_connectors = false',
     'enable_mcp = false',
+    'enable_background_processes = false',
+    'enable_subagents = false',
     'default_approval_policy = "ask"',
     'outside_workdir = "deny"',
     'default_agent = "readonly"',
@@ -104,7 +106,8 @@ function vibeConfig(model: string | undefined): string {
 const READONLY_AGENT = [
   'display_name = "Read Only"',
   'description = "只读检索与文件读取，不写文件、不执行命令"',
-  'enabled_tools = ["grep", "read_file", "skill"]',
+  // 3.1.4 没有 grep 工具；搜索只能走 shell，这里不保留 shell 工具配置。
+  'enabled_tools = ["read_file", "skill"]',
   '',
 ].join('\n');
 

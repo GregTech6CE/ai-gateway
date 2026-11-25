@@ -515,9 +515,14 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
   }
 
   const tools = createCodeTools({ root: dirs.root });
-  const maxRetries = budgets.model_pool.rate_limit_retries;
+  const httpMaxRetries = budgets.model_pool.rate_limit_retries;
+  const acpMaxRetries = budgets.model_pool.acp_retries;
   const startIndex = entries.indexOf(chosen);
   let lastError: string = 'no attempt';
+  let lastErrorDetail = '';
+  let lastEntryId = '';
+  let lastSteps = 0;
+  let lastTokens = 0;
 
   for (let index = startIndex; index < entries.length; index += 1) {
     const entry = entries[index];
@@ -530,10 +535,18 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
     }
     let retries = 0;
     let switchEntry = false;
+    // ACP 整会话重跑代价高，同入口重试与 HTTP 的 rate_limit_retries 解耦。
+    const maxRetries = entry.driver === 'acp' ? acpMaxRetries : httpMaxRetries;
 
     while (true) {
       if (Date.now() >= deadline) {
-        return finish('failed', 'deadline exceeded', { attempts: result.attempts });
+        return finish('failed', 'deadline exceeded', {
+          attempts: result.attempts,
+          entry_id: lastEntryId || entry.id,
+          steps: lastSteps,
+          tokens: lastTokens,
+          ...(lastErrorDetail ? { error_detail: lastErrorDetail } : {}),
+        });
       }
       result.attempts += 1;
       markUsed(health, entry, now());
@@ -547,7 +560,7 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
         // 并在提示里说明两者的位置，避免按相对路径找不到。
         const acpPrompt = {
           ...prompt,
-          user: `${userPrompt}\n\nACP 会话说明：当前工作目录是 code/（其中 current 指向主分支工作树），golden 与历史版本也在此目录下；inputs/ 与 outputs/ 不在工作目录下，其绝对路径分别为 ${dirs.inputs}、${dirs.outputs}，已作为附加工作区加入会话。`,
+          user: `${userPrompt}\n\nACP 会话说明：当前工作目录是 code/（其中 current 指向主分支工作树），golden 与历史版本也在此目录下；inputs/ 与 outputs/ 不在工作目录下，其绝对路径分别为 ${dirs.inputs}、${dirs.outputs}，已作为附加工作区加入会话。\n检索要求：不要调用 bash 或其他命令执行工具；先用 inputs/code_manifest.json 与 outputs/log_digest.md 定位，再使用 read_file 的 offset/limit 只读取必要片段，避免重复读取整文件。`,
         };
         const onStep = (step: AnalysisStep): void => {
           log.info('agent step', {
@@ -607,12 +620,22 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
         }
         const modelError = toModelError(error);
         markFailure(health, entry, modelError, budgets.model_pool, now());
+        const errorDetail = redactText(modelError.detail, secrets).slice(0, 500);
+        lastErrorDetail = errorDetail;
+        lastEntryId = entry.id;
+        if (modelError.steps !== undefined) {
+          lastSteps = modelError.steps;
+        }
+        if (modelError.tokens !== undefined) {
+          lastTokens = modelError.tokens;
+        }
         lastError = `${modelError.kind}${modelError.status ? ` ${modelError.status}` : ''}`;
         log.warn('模型调用失败', {
           entry: entry.id,
           kind: modelError.kind,
           status: modelError.status,
           retry: retries,
+          detail: errorDetail,
         });
 
         if (modelError.kind === 'auth' || modelError.kind === 'config') {
@@ -632,10 +655,9 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
             continue;
           }
         }
-        return finish('failed', lastError, {
-          entry_id: entry.id,
-          attempts: result.attempts,
-        });
+        // 单入口重试耗尽或剩余时间不足以退避：切换下一个候选，而不是直接失败。
+        switchEntry = true;
+        break;
       }
     }
 
@@ -645,7 +667,13 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
     log.warn('入口不可用，切换到下一个', { entry: entry.id });
   }
 
-  return finish('failed', lastError, { attempts: result.attempts });
+  return finish('failed', lastError, {
+    attempts: result.attempts,
+    ...(lastEntryId ? { entry_id: lastEntryId } : {}),
+    steps: lastSteps,
+    tokens: lastTokens,
+    ...(lastErrorDetail ? { error_detail: lastErrorDetail } : {}),
+  });
 }
 
 export async function main(): Promise<void> {

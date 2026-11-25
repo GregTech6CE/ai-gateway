@@ -110,6 +110,7 @@ function makeFixture(
   baseUrl: string,
   extraEntries: Array<Record<string, unknown>> = [],
   extraKeys: Record<string, string> = {},
+  includeDefault = true,
 ): Fixture {
   const root = mkdtempSync(join(tmpdir(), 'gt6-analysis-'));
   tempDirs.push(root);
@@ -136,16 +137,20 @@ function makeFixture(
     JSON.stringify({
       analysis_entries: [
         ...extraEntries,
-        {
-          id: 'test-entry',
-          provider: 'test',
-          base_url: baseUrl,
-          api_key_env: 'MODEL_KEY_TEST',
-          model: 'test-model',
-          role: 'analysis',
-          weight: 1,
-          structured_outputs: true,
-        },
+        ...(includeDefault
+          ? [
+              {
+                id: 'test-entry',
+                provider: 'test',
+                base_url: baseUrl,
+                api_key_env: 'MODEL_KEY_TEST',
+                model: 'test-model',
+                role: 'analysis',
+                weight: 1,
+                structured_outputs: true,
+              },
+            ]
+          : []),
       ],
     }),
   );
@@ -235,7 +240,7 @@ describe('runAnalysis 遇到 AgentError', () => {
   });
 });
 
-function acpEntry(recordPath: string): Record<string, unknown> {
+function acpEntry(scenario: string, recordPath: string): Record<string, unknown> {
   return {
     id: 'vibe-entry',
     provider: 'mistral',
@@ -246,7 +251,8 @@ function acpEntry(recordPath: string): Record<string, unknown> {
     weight: 2,
     acp: {
       command: process.execPath,
-      args: [ACP_FIXTURE, 'exit-auth', recordPath],
+      args: [ACP_FIXTURE, scenario, recordPath],
+      api_key_target_env: 'FAKE_API_KEY',
       preset: 'generic',
     },
   };
@@ -263,7 +269,7 @@ describe('runAnalysis 在 ACP 入口故障时切换', () => {
       tempDirs.push(recordDir);
       const { dirs, env } = makeFixture(
         harness.baseUrl,
-        [acpEntry(join(recordDir, 'record.json'))],
+        [acpEntry('exit-auth', join(recordDir, 'record.json'))],
         { MODEL_KEY_MISTRAL: 'acp-key' },
       );
 
@@ -292,6 +298,92 @@ describe('runAnalysis 在 ACP 入口故障时切换', () => {
         readFileSync(join(dirs.outputs, 'relevance.json'), 'utf8'),
       ) as { entry_id?: string };
       expect(relevance.entry_id).toBe('test-entry');
+    },
+  );
+
+  it(
+    'ACP 入口 5xx 重试 1 次后切换到 OpenAI 兼容入口',
+    { timeout: 30_000 },
+    async () => {
+      const harness = await startProvider(JSON.stringify(ANSWER));
+      open.push(harness);
+      const recordDir = mkdtempSync(join(tmpdir(), 'gt6-acp-retry-'));
+      tempDirs.push(recordDir);
+      const { dirs, env } = makeFixture(
+        harness.baseUrl,
+        [acpEntry('analysis-5xx', join(recordDir, 'record.json'))],
+        { MODEL_KEY_MISTRAL: 'acp-key' },
+      );
+      const sleep = vi.fn(async (_ms: number) => {});
+
+      const outcome = await runAnalysis({
+        env,
+        dirs,
+        sleep,
+        createModel: () =>
+          createChatModel({
+            baseUrl: harness.baseUrl,
+            apiKey: 'test-key',
+            model: 'test-model',
+            providerName: 'test',
+          }),
+      });
+
+      expect(outcome.status).toBe('complete');
+      expect(outcome.result.entry_id).toBe('test-entry');
+      // ACP 两次尝试（首次 + 1 次重试），再切换成功一次。
+      expect(outcome.result.attempts).toBe(3);
+      expect(sleep).toHaveBeenCalledTimes(1);
+
+      const health = readHealth(dirs);
+      expect(health.endpoints?.['vibe-entry']?.failures).toBe(2);
+      expect(health.endpoints?.['test-entry']?.status).toBe('ok');
+    },
+  );
+
+  it(
+    '全部入口失败时记录脱敏错误详情与非零 steps',
+    { timeout: 30_000 },
+    async () => {
+      const recordDir = mkdtempSync(join(tmpdir(), 'gt6-acp-all-fail-'));
+      tempDirs.push(recordDir);
+      const { dirs, env } = makeFixture(
+        'http://127.0.0.1:9/v1',
+        [acpEntry('analysis-5xx', join(recordDir, 'record.json'))],
+        { MODEL_KEY_MISTRAL: 'acp-key' },
+        false,
+      );
+      const sleep = vi.fn(async (_ms: number) => {});
+
+      const outcome = await runAnalysis({ env, dirs, sleep });
+
+      expect(outcome.status).toBe('failed');
+      expect(outcome.result.entry_id).toBe('vibe-entry');
+      expect(outcome.result.attempts).toBe(2);
+      expect(outcome.result.steps).toBe(2);
+
+      const detail = String(outcome.result.error_detail ?? '');
+      expect(detail).toContain('503');
+      expect(detail).not.toContain('acp-key');
+      expect(detail.length).toBeLessThanOrEqual(500);
+
+      const persisted = JSON.parse(
+        readFileSync(join(dirs.outputs, 'result.json'), 'utf8'),
+      ) as {
+        status?: string;
+        entry_id?: string;
+        attempts?: number;
+        steps?: number;
+        error_detail?: string;
+      };
+      expect(persisted).toMatchObject({
+        status: 'failed',
+        entry_id: 'vibe-entry',
+        attempts: 2,
+        steps: 2,
+      });
+      expect(String(persisted.error_detail ?? '')).toContain('503');
+      expect(String(persisted.error_detail ?? '')).not.toContain('acp-key');
     },
   );
 });

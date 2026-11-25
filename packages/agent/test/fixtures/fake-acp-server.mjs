@@ -169,6 +169,23 @@ async function handlePrompt(message) {
   persist();
   currentPromptId = message.id;
   const id = message.id;
+  if (scenario === 'analysis-5xx') {
+    const promptText = (message.params?.prompt ?? [])
+      .map((block) => block.text ?? '')
+      .join('\n');
+    if (promptText.includes('不要调用任何工具')) {
+      sendText(JSON.stringify({ relevance: 'in_scope', confidence: 0.99, reason: 'test' }));
+      respondPrompt(id, 'end_turn');
+      return;
+    }
+    sendToolCall('fail-1', 'Grep recipe', 'search', { query: 'recipe' }, 'grep');
+    sendToolCall('fail-2', 'Read src/a.ts', 'read', { path: 'src/a.ts' }, 'read_file');
+    process.stderr.write(
+      `503 Service Unavailable: upstream failed key=${process.env.FAKE_API_KEY ?? ''}\n`,
+    );
+    setTimeout(() => process.exit(1), 100);
+    return;
+  }
   if (scenario === 'exit-auth') {
     process.stderr.write('401 Unauthorized: invalid api key\n');
     setTimeout(() => process.exit(1), 100);
@@ -191,7 +208,7 @@ async function handlePrompt(message) {
     setTimeout(() => {
       sendAnswer();
       respondPrompt(id, 'end_turn');
-    }, 800);
+    }, 2500);
     return;
   }
   await runReadFlow(id);

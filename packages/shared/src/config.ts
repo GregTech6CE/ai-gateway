@@ -311,6 +311,8 @@ export const ModelPoolBudgetSchema = z
     late_base_minutes: z.number().min(0),
     late_max_minutes: z.number().min(0),
     rate_limit_retries: z.number().int().min(0),
+    /** ACP 入口的同入口重试上限：整会话重跑代价高，默认只重试 1 次。 */
+    acp_retries: z.number().int().min(0).default(1),
     rate_limit_wait_seconds: z.number().min(0),
     rate_limit_min_wait_seconds: z.number().min(0),
     rate_limit_max_wait_seconds: z.number().min(0),
