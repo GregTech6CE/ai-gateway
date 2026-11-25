@@ -33,7 +33,7 @@ import {
   type PromptTemplate,
   type RelevanceVerdict,
 } from './analyzer.ts';
-import { ModelError, type ModelEntry } from './model-pool.ts';
+import { FS_ERROR_CODES, ModelError, type ModelEntry } from './model-pool.ts';
 import { recoverFromText } from './output-errors.ts';
 import { prepareAcpChildEnv } from './vibe-env.ts';
 
@@ -733,7 +733,7 @@ function mapAcpFailure(
   const message = error instanceof Error ? error.message : String(error);
   const detail = `${phase}: ${message}\n${stderr}`.slice(0, 1500);
   const code = (error as { code?: unknown } | undefined)?.code;
-  if (code === 'ENOENT') {
+  if (typeof code === 'string' && FS_ERROR_CODES.has(code)) {
     return new ModelError('config', 0, 0, detail);
   }
   const retryAfter = retryAfterOf(detail);

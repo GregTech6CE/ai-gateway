@@ -373,7 +373,8 @@ export function toModelError(error: unknown): ModelError {
   return new ModelError('network', 0, retryAfterSeconds, detail);
 }
 
-const FS_ERROR_CODES = new Set<string>([
+/** 本地文件系统错误码：与网络故障区分，统一归为 config。 */
+export const FS_ERROR_CODES: ReadonlySet<string> = new Set<string>([
   'EACCES',
   'EPERM',
   'ENOENT',

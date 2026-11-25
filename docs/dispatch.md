@@ -9,7 +9,7 @@
 | 层 | 位置 | 职责 |
 |---|---|---|
 | 触发层 | 业务仓的 `.github/workflows/ai-issue-trigger.yml` | 监听事件、防刷过滤、透传参数 |
-| 执行层 | `GregTech6CE/.github` 的 `ai-issue-runner.yml` | `fetch`、`gate`、`analysis`、`finalize` |
+| 执行层 | `GregTech6CE/.github` 的 `ai-issue-runner.yml` | `gate`、`analysis`、`finalize` |
 | 执行器 | 本仓库的 `snapshot` Release | `gt6-ci-*.tgz` 与 `SHASUMS256.txt` |
 
 触发层决定"谁可以唤起分析"，执行层决定"能做什么、能写什么"。两者的权限都写在各自的
@@ -43,7 +43,7 @@ workflow 文件里，不通过参数传递。
 | 动作 | 执行方 | 说明 |
 |---|---|---|
 | 事件过滤与防刷 | 触发层 | 全局开关、Bot 作者、维护者 `@bot` 评论 |
-| 执行器包下载与校验 | 执行层 `fetch` | 只读；不编译 |
+| 执行器包下载与校验 | 执行层 `gate` | 只读；不编译 |
 | 校验与快照 | 执行层 `gate` | 只读；不写 issue |
 | 分析 | 执行层 `analysis` | 产出 artifact；无写凭据 |
 | 渲染、扫描、写回 | 执行层 `finalize` | 唯一写 issue 的位置 |
@@ -55,12 +55,14 @@ workflow 文件里，不通过参数传递。
 
 - 并发组是 `ai-issue-<repo>-<issue>`，`cancel-in-progress: false`：同一 issue 的请求
   串行，不互相取消，避免半途终止留下无法回写的状态。
-- `dry_run` 抑制评论与标签写回，`fetch`、`gate`、`analysis` 与渲染照常执行，产物照常
-  上传。它不抑制 `MODEL_HEALTH` 的写回：该步骤无条件运行。
+- `dry_run` 抑制评论与标签写回，`gate`、`analysis` 与渲染照常执行，产物照常上传。
+  它不抑制 `MODEL_HEALTH` 的写回：该步骤无条件运行。`dry_run` 时也不签发 issue 写权限的
+  App token（`app_health` 仍签发，只用于写 `MODEL_HEALTH`）。
 - `finalize` 的条件是 `always() && needs.gate.result != 'skipped'`：`analysis` 失败、
   超时或被取消都会进入 `finalize` 并回写失败结论。`gate` 判定 skip 时也进入，但
-  `render` 不产出评论，写回随之跳过，issue 上不会留下任何写入。`fetch` 失败时没有可
-  回写的上下文，整次 run 直接失败。
+  `render` 不产出评论，写回随之跳过，issue 上不会留下任何写入。`gate` 失败时 run 已经
+  失败，但 `finalize` 仍会运行：`gate-bundle` 带执行器且没有 skip 判定时，`render`
+  渲染失败评论，非 `dry_run` 时写回；否则不产生写入。
 - 写回失败不改变 run 的结论：`render`、`write-back` 与 `update-health` 都是
   `continue-on-error: true`，失败只体现在日志与 artifact 里。
 

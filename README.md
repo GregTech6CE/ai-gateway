@@ -16,11 +16,11 @@
 
 1. 业务仓的触发薄壳（`GregTech6CE/GregTech6` 的 `.github/workflows/ai-issue-trigger.yml`）
    监听 issue 与评论事件，做防刷过滤后调用组织级执行层。
-2. 组织仓 `GregTech6CE/.github` 的 `ai-issue-runner.yml` 以 `workflow_call` 执行四个 job：
-   - `fetch`：检出本仓库的 `config/`、`prompts/`、`templates/`，从 `snapshot` Release
-     下载 `gt6-ci-*` 包并校验 `SHASUMS256.txt`；不安装依赖、不编译。
-   - `gate`：只读校验仓库配置、issue 状态、触发者权限、`bot:v1:` 标记与 7 天超期，
-     通过后生成快照；显式 `force` 无视标记与时间窗口。
+2. 组织仓 `GregTech6CE/.github` 的 `ai-issue-runner.yml` 以 `workflow_call` 执行三个 job：
+   - `gate`：检出本仓库的 `config/`、`prompts/`、`templates/`，从 `snapshot` Release
+     下载 `gt6-ci-*` 包并校验 `SHASUMS256.txt`；然后只读校验仓库配置、issue 状态、
+     触发者权限、`bot:v1:` 标记与 7 天超期，通过后生成快照；显式 `force` 无视标记与
+     时间窗口。产物供下游复用，不编译。
    - `analysis`：按 issue 报告的版本检出代码、预取附件，再做相关性分类，然后由
      `@gt6ce/agent`（只读工具 + 受控 bash）产出结构化结论。
    - `finalize`：确定性渲染、凭据扫描，以 `gt6ce-bot[bot]` 身份新建评论与标签，并更新

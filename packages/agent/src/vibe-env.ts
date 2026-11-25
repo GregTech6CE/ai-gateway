@@ -129,8 +129,10 @@ function lstatIfExists(target: string): Stats | undefined {
 }
 
 /**
- * 为删除补齐权限：目录需要写与执行，文件需要写。
+ * 为删除补齐权限：目录需要读写与执行，文件需要写。
  *
+ * 目录补 `0o700` 而不是只补写与执行位：无读位的目录会让 `readdirSync`
+ * 失败，子项就永远删不掉。
  * 只使用 `lstatSync`，符号链接一律跳过，避免把权限改到链接目标上。
  */
 function makeRemovable(target: string): void {
@@ -140,7 +142,7 @@ function makeRemovable(target: string): void {
   }
   if (stats.isDirectory()) {
     try {
-      chmodSync(target, (stats.mode & 0o777) | 0o300);
+      chmodSync(target, (stats.mode & 0o777) | 0o700);
     } catch {
       // 继续尝试子项；删除阶段仍会整体兜底
     }

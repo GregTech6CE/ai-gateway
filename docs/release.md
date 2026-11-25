@@ -32,10 +32,10 @@ sha256sum -c --ignore-missing SHASUMS256.txt
 
 ## 消费方
 
-- **执行层**：`GregTech6CE/.github` 的 `ai-issue-runner.yml` 在 `fetch` job 下载
+- **执行层**：`GregTech6CE/.github` 的 `ai-issue-runner.yml` 在 `gate` job 下载
   `SHASUMS256.txt`，按 `gt6-ci-[0-9a-f]{7,40}\.tgz` 解析包名，断言精确校验行通过后
-  再解包为 `ci-bundle` artifact。没有现场构建的回退路径：`snapshot` 缺资产或校验失败，
-  整次执行直接失败。
+  再解包，与配置面、`inputs/` 一起作为 `gate-bundle` artifact 交给下游。没有现场构建的
+  回退路径：`snapshot` 缺资产或校验失败，整次执行直接失败。
 - **Docker**：三个业务镜像的默认 `release` 阶段按 `ARTIFACT_SHORT` 下载并校验
   `gt6-<app>-<short>.tgz`，解包为 `/app/dist` 与 `/app/package.json`；
   `--target local` 改用本机 `dist`。约束与用法见 [deploy.md](deploy.md)。

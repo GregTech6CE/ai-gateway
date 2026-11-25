@@ -1,33 +1,38 @@
 # bug issue 分析
 
 一次分析由三层组成：业务仓的触发薄壳负责事件过滤，组织仓 `GregTech6CE/.github` 的
-`ai-issue-runner.yml` 执行四个 job，本仓库只发布执行器包。参数契约见
+`ai-issue-runner.yml` 执行三个 job，本仓库只发布执行器包。参数契约见
 [dispatch](../dispatch.md)，授权判定见 [auth](../auth.md)。
 
 ```
-fetch ──> gate ──> analysis ──> finalize
-             │                       ▲
-             └───── (skip) ──────────┘
+gate ──> analysis ──> finalize
+  │                       ▲
+  └───── (skip) ──────────┘
 ```
 
 所有 job 只消费上游 artifact 里的结构化文件，不解析彼此的日志。目录约定由
 `CI_ROOT=.gateway` 统一：`config/`、`prompts/`、`templates/`、`inputs/`、`outputs/`、
 `code/` 都在它下面。
 
-## `fetch`
+## `gate`
 
 ### 启用条件
 
-每次调用都执行，无额外判定。
+每次调用都执行，无额外判定。无论判定结果如何都会运行完毕，并写出
+`inputs/verdict.json`（`gate.js` 未运行或抛错时除外）。
 
 ### 权限边界
 
 - **文件访问**：稀疏检出执行器仓库到 `.gateway`，只取 `config/`、`prompts/`、
-  `templates/`；解包写到 `.gateway/apps/ci/dist`；临时包写在 `$RUNNER_TEMP`。
-- **容器权限**：`ubuntu-latest`，`timeout-minutes: 10`，无提权、无编译。
-- **网络访问**：`github.com`、`api.github.com`（检出）与
-  `objects.githubusercontent.com`（Release 资产）。不接触 issue 内容与模型端点。
-- **Token 权限**：`contents: read`；下载 Release 资产走匿名请求，不使用任何 secret。
+  `templates/`；把 Release 包解到 `.gateway/apps/ci/dist`；写 `inputs/`；临时包写在
+  `$RUNNER_TEMP`。
+- **容器权限**：`ubuntu-latest`，`timeout-minutes: 20`，无提权、无编译。
+- **网络访问**：`github.com`（检出与 `git ls-remote`）、`api.github.com`（可见性、
+  issue 与评论读取）、`release-assets.githubusercontent.com`（Release 资产）与
+  `*.actions.githubusercontent.com`、`*.blob.core.windows.net`（artifact 上传）。
+  不调用模型端点。
+- **Token 权限**：`contents: read`。`github.token` 用于检出与可见性检查；issue、评论的
+  读取默认走匿名请求，`GH_RO_TOKEN` 存在时使用它。不持有 App token 与 `MODEL_KEY_*`。
 
 ### 执行流程
 
@@ -37,20 +42,20 @@ fetch ──> gate ──> analysis ──> finalize
 3. 下载该 `.tgz`，执行 `sha256sum -c --ignore-missing SHASUMS256.txt`；校验失败即失败，
    没有现场构建的回退路径。
 4. 把归档里的 `package/dist` 解到 `.gateway/apps/ci/dist`，并断言入口文件存在。
-5. 上传 `ci-bundle-<run_id>` artifact。
-
-下载与校验集中在 `fetch`：下游 `analysis` 的出网白名单不需要为 Release CDN 放宽。
-
-### 最终产出
-
-`ci-bundle-<run_id>` artifact：执行器配置面（`config/`、`prompts/`、`templates/`）与
-`apps/ci/dist`。保留 7 天。下游三个 job 只下载它，不再安装任何 npm 包。
-
-## `gate`
-
-### 启用条件
-
-`needs: fetch`。无论后续判定如何都会运行完毕，并总是写出 `inputs/verdict.json`。
+5. `node .gateway/apps/ci/dist/jobs/gate.js`：
+   1. 加载 `config/repos.json`、`config/models.json`、`config/budgets.json`，非法即跳过。
+   2. 读取 `MODEL_HEALTH` 变量，规范化后写入 `inputs/model_health.json`。
+   3. 校验可见性、issue 形态与触发者权限（判定顺序见下）。
+   4. 取 issue 评论（最多 5 页），只保留 bot 自己发的评论作为标记来源。
+   5. `shouldSkipPassiveTrigger`：`force` → 放行；`stop`/`done` → 跳过；`pending` 未超过
+      `requested_stale_minutes` → 跳过；`failed` 不阻断；issue 超过
+      `max_issue_age_days` → 跳过。
+   6. `versionBase` 解析 issue 表单里的版本号，`git ls-remote --tags` 取远端 tag，
+      按 `tag_template` 解析出 `version_tag`；ref 列表为 `fallback_ref` + 版本 tag +
+      `extra_code_refs`。
+   7. 写快照、issue 正文与候选入口。
+6. `if: always()` 上传 `gate-bundle-<run_id>`；下载与校验集中在这里，下游 `analysis`
+   的出网白名单不需要为 Release CDN 放宽。
 
 判定顺序（命中即停）：
 
@@ -64,28 +69,6 @@ fetch ──> gate ──> analysis ──> finalize
 6. `bot:v1:` 标记与 7 天超期：由 `shouldSkipPassiveTrigger` 一次判定，`force` 直接放行；
 7. 解析版本 ref。
 
-### 权限边界
-
-- **文件访问**：读 `config/`；写 `inputs/`。
-- **容器权限**：`ubuntu-latest`，`timeout-minutes: 15`，无提权。
-- **网络访问**：`api.github.com`；`git ls-remote` 访问 `github.com` 取 tag 列表。
-- **Token 权限**：没有 App token。使用 `github.token`（`contents: read`）做可见性
-  检查（`B_REPO` 与 `REPO` 同为当前仓库）；issue 与评论的读取默认走匿名请求，
-  `GH_RO_TOKEN` 存在时使用它。不持有 `MODEL_KEY_*`。
-
-### 执行流程
-
-1. 加载 `config/repos.json`、`config/models.json`、`config/budgets.json`，非法即跳过。
-2. 读取 `MODEL_HEALTH` 变量，规范化后写入 `inputs/model_health.json`。
-3. 校验可见性、issue 形态与触发者权限（见上）。
-4. 取 issue 评论（最多 5 页），只保留 bot 自己发的评论作为标记来源。
-5. `shouldSkipPassiveTrigger`：`force` → 放行；`stop`/`done` → 跳过；`pending` 未超过
-   `requested_stale_minutes` → 跳过；`failed` 不阻断；issue 超过 `max_issue_age_days` → 跳过。
-6. `versionBase` 解析 issue 表单里的版本号，`git ls-remote --tags` 取远端 tag，
-   按 `tag_template` 解析出 `version_tag`；ref 列表为 `fallback_ref` + 版本 tag +
-   `extra_code_refs`。
-7. 写快照、issue 正文与候选入口。
-
 ### 最终产出
 
 | 文件 | 内容 |
@@ -97,8 +80,13 @@ fetch ──> gate ──> analysis ──> finalize
 | `inputs/issue.md` | 标题与正文，便于人工复核 |
 
 `$GITHUB_OUTPUT`：`decision`、`reason`、`code_repo`、`code_ref`、`code_refs`、
-`golden_repo`、`golden_commit`、`cache_prefix`、`issue_title`。外层 artifact 为
-`gate-<run_id>`，保留 30 天。
+`golden_repo`、`golden_commit`、`cache_prefix`、`issue_title`。
+
+外层 artifact 为 `gate-bundle-<run_id>`：执行器配置面（`config/`、`prompts/`、
+`templates/`）、`apps/ci/dist` 与 `inputs/`，保留 30 天。`analysis` 只下载这一份；
+`finalize` 除这一份外，只按条件下载 analysis 产物。`gate` 拒绝或 `analysis` 跳过时，
+`finalize` 仍能拿到执行器与 `inputs/` 里的判定结果（`snapshot.json` 只在 proceed 路径
+写出）。
 
 ## `analysis`
 
@@ -108,22 +96,27 @@ fetch ──> gate ──> analysis ──> finalize
 
 ### 权限边界
 
-- **文件访问**：读 `inputs/`、`config/`、`prompts/`、`code/`；写 `outputs/` 与
-  `code/`（worktree 与 `current` 链接）；`git clone/fetch` 与 `cache/restore` /
-  `cache/save` 读写 `.cache/` 下的两个 mirror；`download-artifact` 写 `.gateway` 下的
-  `apps/ci/dist` 与 `inputs/`。不写 issue 仓库。
+- **文件访问**：读 `inputs/`、`config/`、`prompts/`、`code/`；写 `inputs/`
+  （`code_manifest.json`、`logs/`）、`outputs/` 与 `code/`（worktree 与 `current`
+  链接）；`git clone/fetch` 与 `cache/restore` /
+  `cache/save` 读写 `.cache/` 下的两个 mirror；`download-artifact` 把
+  `gate-bundle-<run_id>` 展开到 `.gateway`；`actions/cache` 读写 `.tools/vibe-acp`。
+  不写 issue 仓库。
 - **容器权限**：`ubuntu-latest`，`timeout-minutes: 75`，无人工审批、无沙箱；隔离由 job
   边界（无写 token、无 App 私钥）、工具路径限制、Zero-Secret bash 与出网白名单共同保证。
 - **网络访问**：`deploy/egress-allowlist.txt` 列出的端点，由 harden-runner 的
-  `egress-policy: block` 强制执行；改一处必须同步另一处。
+  `egress-policy: block` 强制执行；`vibe-acp` 预编译包从 `github.com` 的 Release 下载，
+  落在同一白名单内。改一处必须同步另一处。
 - **Token 权限**：`analysis.js` 步骤只注入 `MODEL_KEY_*`。没有 `GITHUB_TOKEN`、没有
   `GH_TOKEN`、没有 App 凭据；clone 与附件下载都是匿名公开访问。
 
 ### 执行流程
 
-1. 先恢复 uv 缓存并安装 `mistral-vibe`（需要 PyPI / Astral 出网），再由
-   `harden-runner` 打开出网白名单。
-2. 下载 `ci-bundle-<run_id>` 与 `gate-<run_id>`，恢复两个 mirror 缓存。
+1. 先由 `harden-runner` 打开出网白名单，再恢复 `vibe-acp` 解压目录的缓存；未命中时
+   直拉 `vibe-acp-linux-x86_64-3.1.4.tar.gz`，按固定 SHA256 校验后解压到
+   `.tools/vibe-acp`，把该目录加入 `PATH` 并校验 `--version`。工具链不再依赖 Python、
+   `uv` 或 PyPI。
+2. 下载 `gate-bundle-<run_id>`（执行器、配置面与 `inputs/`），恢复两个 mirror 缓存。
 3. 同步 mirror 并创建 worktree：`code/current` 指向主 ref，`code/<slug>` 为其余 ref，
    `code/golden` 为上游固定提交；任一 ref 不可用只跳过该目录。
 4. `node dist/jobs/manifest.js`：清点文件，写 `inputs/code_manifest.json`。
@@ -169,17 +162,19 @@ fetch ──> gate ──> analysis ──> finalize
 
 ### 权限边界
 
-- **文件访问**：读 `.gateway` 下的配置面与三个 artifact；写 `outputs/`（`comment.md`、
-  `triage.json`）。
+- **文件访问**：读 `.gateway` 下的配置面、`gate-bundle` 与按条件下载的 analysis 产物；
+  写 `outputs/`（`comment.md`、`triage.json`）。
 - **容器权限**：`ubuntu-latest`，`timeout-minutes: 15`，不运行模型。
 - **网络访问**：`api.github.com`。
-- **Token 权限**：`app_issue` 是当前仓库的 `issues: write` installation token；
-  `app_health` 因签发 action 不支持变量权限，持有 App 的完整权限集，仅用于写
-  `MODEL_HEALTH`。不持有 `MODEL_KEY_*`。
+- **Token 权限**：`app_issue` 是当前仓库的 `issues: write` installation token，
+  `dry_run` 时不签发；`app_health` 因签发 action 不支持变量权限，持有 App 的完整权限集，
+  仅用于写 `MODEL_HEALTH`。不持有 `MODEL_KEY_*`。
 
 ### 执行流程
 
-1. 下载 dist、gate inputs、analysis outputs 与 scan report（缺失时继续）。
+1. 下载 `gate-bundle-<run_id>`；`analysis.outputs.scan_upload == 'true'` 时下载
+   `analysis-<run_id>`，`analysis` 未跳过且扫描未放行时下载
+   `analysis-<run_id>-report`（缺失时继续）。
 2. `render`：gate 跳过则不出评论；`rejected` 用 `reject.md`；`complete`/`partial` 用
    `comment.md` 模板；失败或结论非法时渲染失败评论。尾部写 `bot:v1:done` 或
    `bot:v1:failed`。

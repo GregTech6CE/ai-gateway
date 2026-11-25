@@ -114,6 +114,26 @@ describe('prepareAcpChildEnv', () => {
     expect(lstatSync(external).mode & 0o777).toBe(externalMode);
   });
 
+  it('清理无读位目录与其中的只读文件', () => {
+    const cwd = workDir();
+    const prepared = prepareAcpChildEnv({
+      preset: 'mistral-vibe',
+      cwd,
+      baseEnv: { PATH: '/usr/bin' },
+    });
+    const home = prepared.env.VIBE_HOME;
+    expect(home).toBeTruthy();
+
+    const lockedDir = join(home!, 'locked');
+    mkdirSync(lockedDir);
+    writeFileSync(join(lockedDir, 'inner.txt'), 'locked', 'utf8');
+    chmodSync(join(lockedDir, 'inner.txt'), 0o444);
+    chmodSync(lockedDir, 0o000);
+
+    expect(() => prepared.cleanup()).not.toThrow();
+    expect(existsSync(home!)).toBe(false);
+  });
+
   it('generic 只按 api_key_target_env 注入密钥，不创建 VIBE_HOME', () => {
     const cwd = workDir();
     const prepared = prepareAcpChildEnv({

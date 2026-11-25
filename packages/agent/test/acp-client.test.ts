@@ -2,7 +2,7 @@
  * ACP 驱动的协议级测试：假 agent 用裸 ndjson 实现，覆盖握手、审批、流式组装、
  * 软超时/绕圈取消与进程异常映射。
  */
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -18,6 +18,19 @@ import {
 import { bindings, loadPool, type ModelEntry } from '../src/model-pool.ts';
 
 const cleanupFailure = vi.hoisted(() => ({ enabled: false, calls: 0 }));
+
+const spawnFailure = vi.hoisted(() => ({ code: '' }));
+
+vi.mock('node:child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('node:child_process')>();
+  const spawn = ((...args: Parameters<typeof actual.spawn>) => {
+    if (spawnFailure.code) {
+      throw Object.assign(new Error(`spawn ${spawnFailure.code}`), { code: spawnFailure.code });
+    }
+    return actual.spawn(...args);
+  }) as typeof actual.spawn;
+  return { ...actual, spawn };
+});
 
 vi.mock('../src/vibe-env.ts', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../src/vibe-env.ts')>();
@@ -66,6 +79,7 @@ const tempDirs: string[] = [];
 afterEach(() => {
   cleanupFailure.enabled = false;
   cleanupFailure.calls = 0;
+  spawnFailure.code = '';
   for (const dir of tempDirs.splice(0)) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -166,6 +180,44 @@ describe('runAcpAnalysis', () => {
         expect(cleanupFailure.calls).toBeGreaterThan(0);
       } finally {
         cleanupFailure.enabled = false;
+      }
+    },
+  );
+
+  it(
+    '拉起 ACP 进程遇 EACCES/EPERM 归类为 config',
+    { timeout: 15_000 },
+    async () => {
+      const dir = workDir();
+      const command = join(dir, 'vibe-acp');
+      writeFileSync(command, '#!/bin/sh\nexit 0\n', 'utf8');
+      if (process.platform !== 'win32') {
+        chmodSync(command, 0o755);
+      }
+      const base = entryFor('read-flow', join(dir, 'record.json'));
+      const entry: ModelEntry = { ...base, acp: { ...base.acp!, command } };
+      for (const code of ['EACCES', 'EPERM']) {
+        cleanupFailure.calls = 0;
+        spawnFailure.code = code;
+        try {
+          // spawn 抛出的错误与异步 'error' 事件共用 mapAcpFailure 的归类逻辑。
+          await expect(
+            runAcpAnalysis({
+              entry,
+              apiKey: 'test-key',
+              prompt: PROMPT,
+              cwd: dir,
+            }),
+          ).rejects.toMatchObject({
+            name: 'ModelError',
+            kind: 'config',
+            status: 0,
+            detail: expect.stringContaining(`spawn ${code}`),
+          });
+          expect(cleanupFailure.calls).toBeGreaterThan(0);
+        } finally {
+          spawnFailure.code = '';
+        }
       }
     },
   );
