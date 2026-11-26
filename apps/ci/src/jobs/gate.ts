@@ -142,6 +142,25 @@ function cachePrefix(codeRepo: string): string {
   return `gt6-mirror-${codeRepo.toLowerCase().replaceAll('/', '-')}`;
 }
 
+/**
+ * 解析目标仓只读访问 token：
+ * - 显式传入 `GH_RO_TOKEN` 时优先使用；
+ * - 否则仅当 `REPO` 与 `B_REPO` 同仓（忽略大小写）时回退使用 `SELF_TOKEN`，避免跨仓泄露。
+ */
+export function resolveReadOnlyToken(
+  env: Pick<GateEnv, 'GH_RO_TOKEN' | 'SELF_TOKEN' | 'REPO' | 'B_REPO'>,
+): string {
+  if (env.GH_RO_TOKEN) {
+    return env.GH_RO_TOKEN;
+  }
+  const repo = env.REPO.trim().toLowerCase();
+  const botRepo = env.B_REPO.trim().toLowerCase();
+  if (env.SELF_TOKEN && repo && botRepo && repo === botRepo) {
+    return env.SELF_TOKEN;
+  }
+  return '';
+}
+
 async function loadConfigs(dirs: StageDirs): Promise<{
   repos: ReturnType<typeof loadReposConfig>;
   models: ReturnType<typeof loadModelsConfig>;
@@ -220,7 +239,10 @@ export async function runGate(options: GateOptions): Promise<GateOutcome> {
   const health = parseHealth(env.MODEL_HEALTH);
   writeJsonFile(join(dirs.inputs, 'model_health.json'), health);
 
-  const gh = new GitHubClient({ token: env.GH_RO_TOKEN, fetchImpl: options.fetchImpl });
+  const gh = new GitHubClient({
+    token: resolveReadOnlyToken(env),
+    fetchImpl: options.fetchImpl,
+  });
   const self = new GitHubClient({ token: env.SELF_TOKEN, fetchImpl: options.fetchImpl });
 
   if (env.B_REPO) {

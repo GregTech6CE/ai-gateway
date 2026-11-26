@@ -8,7 +8,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import type { StageDirs } from '../src/common.ts';
 import { readJsonFile } from '../src/common.ts';
-import { runGate, type GateEnv } from '../src/jobs/gate.ts';
+import { resolveReadOnlyToken, runGate, type GateEnv } from '../src/jobs/gate.ts';
 
 const REPO_CONFIG = fileURLToPath(new URL('../../../config', import.meta.url));
 const NOW = new Date('2026-11-16T10:00:00Z');
@@ -98,27 +98,28 @@ interface MockOptions {
 }
 
 function mockFetch(options: MockOptions) {
-  const calls: Array<{ method: string; url: string }> = [];
+  const calls: Array<{ method: string; url: string; authorization: string | null }> = [];
   const fetchImpl = async (input: string, init?: RequestInit): Promise<Response> => {
     const url = new URL(input);
     const method = init?.method ?? 'GET';
-    calls.push({ method, url: input });
+    const authorization = new Headers(init?.headers).get('authorization');
+    calls.push({ method, url: input, authorization });
     const path = url.pathname;
     const json = (value: unknown): Response =>
       new Response(JSON.stringify(value), {
         status: 200,
         headers: { 'content-type': 'application/json' },
       });
-    if (path === '/repos/GregTech6CE/ai-gateway') {
+    if (path.toLowerCase() === '/repos/gregtech6ce/ai-gateway') {
       return json({ private: false });
     }
-    if (path === '/repos/gregtech6ce/gregtech6') {
+    if (path.toLowerCase() === '/repos/gregtech6ce/gregtech6') {
       return json({ private: options.targetPrivate ?? false });
     }
-    if (path === '/repos/gregtech6ce/gregtech6/issues/100') {
+    if (path.toLowerCase() === '/repos/gregtech6ce/gregtech6/issues/100') {
       return json(options.issueData);
     }
-    if (path === '/repos/gregtech6ce/gregtech6/issues/100/comments') {
+    if (path.toLowerCase() === '/repos/gregtech6ce/gregtech6/issues/100/comments') {
       return json(options.comments ?? []);
     }
     return new Response('not found', { status: 404 });
@@ -273,5 +274,84 @@ describe('runGate', () => {
     });
     expect(outcome.reason).toBe('BOT_ENABLED=false');
     expect(calls).toHaveLength(0);
+  });
+
+  it('GH_RO_TOKEN 为空且同仓（忽略大小写）时回退使用 SELF_TOKEN', async () => {
+    const { fetchImpl, calls } = mockFetch({ issueData: issue() });
+    const outcome = await runGate({
+      env: env({
+        REPO: 'GregTech6CE/GregTech6',
+        B_REPO: 'gregtech6ce/gregtech6',
+        SELF_TOKEN: 'same-repo-token',
+        GH_RO_TOKEN: '',
+      }),
+      dirs,
+      fetchImpl,
+      now: NOW,
+      remoteTags: new Set(['v1.21.1']),
+    });
+    expect(outcome.decision).toBe('proceed');
+    const issueCall = calls.find((call) => call.url.endsWith('/issues/100'));
+    const commentsCall = calls.find((call) => call.url.includes('/issues/100/comments'));
+    expect(issueCall?.authorization).toBe('Bearer same-repo-token');
+    expect(commentsCall?.authorization).toBe('Bearer same-repo-token');
+    expect(
+      resolveReadOnlyToken({
+        REPO: 'GregTech6CE/GregTech6',
+        B_REPO: 'gregtech6ce/gregtech6',
+        SELF_TOKEN: 'same-repo-token',
+        GH_RO_TOKEN: '',
+      }),
+    ).toBe('same-repo-token');
+  });
+
+  it('GH_RO_TOKEN 为空且跨仓时不回退 SELF_TOKEN', async () => {
+    const { fetchImpl, calls } = mockFetch({ issueData: issue() });
+    const outcome = await runGate({
+      env: env({
+        REPO: 'gregtech6ce/gregtech6',
+        B_REPO: 'GregTech6CE/ai-gateway',
+        SELF_TOKEN: 'bot-repo-secret',
+        GH_RO_TOKEN: '',
+      }),
+      dirs,
+      fetchImpl,
+      now: NOW,
+      remoteTags: new Set(['v1.21.1']),
+    });
+    expect(outcome.decision).toBe('proceed');
+    const botRepoCall = calls.find((call) => call.url.endsWith('/repos/GregTech6CE/ai-gateway'));
+    const targetRepoCall = calls.find((call) => call.url.endsWith('/repos/gregtech6ce/gregtech6'));
+    const issueCall = calls.find((call) => call.url.endsWith('/issues/100'));
+    expect(botRepoCall?.authorization).toBe('Bearer bot-repo-secret');
+    expect(targetRepoCall?.authorization).toBeNull();
+    expect(issueCall?.authorization).toBeNull();
+    expect(
+      resolveReadOnlyToken({
+        REPO: 'gregtech6ce/gregtech6',
+        B_REPO: 'GregTech6CE/ai-gateway',
+        SELF_TOKEN: 'bot-repo-secret',
+        GH_RO_TOKEN: '',
+      }),
+    ).toBe('');
+  });
+
+  it('显式提供 GH_RO_TOKEN 时优先使用而非 SELF_TOKEN', async () => {
+    const { fetchImpl, calls } = mockFetch({ issueData: issue() });
+    const outcome = await runGate({
+      env: env({
+        REPO: 'GregTech6CE/GregTech6',
+        B_REPO: 'GregTech6CE/GregTech6',
+        SELF_TOKEN: 'self-token',
+        GH_RO_TOKEN: 'explicit-ro-token',
+      }),
+      dirs,
+      fetchImpl,
+      now: NOW,
+      remoteTags: new Set(['v1.21.1']),
+    });
+    expect(outcome.decision).toBe('proceed');
+    const issueCall = calls.find((call) => call.url.endsWith('/issues/100'));
+    expect(issueCall?.authorization).toBe('Bearer explicit-ro-token');
   });
 });
