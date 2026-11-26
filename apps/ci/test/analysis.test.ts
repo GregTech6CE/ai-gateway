@@ -215,6 +215,18 @@ describe('runAnalysis 遇到 AgentError', () => {
     expect(harness.requests).toHaveLength(3);
     expect(harness.requests[0]?.tools).toBeUndefined();
     expect(Array.isArray(harness.requests[1]?.tools)).toBe(true);
+    const sentPrompt = JSON.stringify(harness.requests[1]?.messages ?? []);
+    expect(sentPrompt).not.toContain('code_manifest.json');
+    const sentTools = (harness.requests[1]?.tools as Array<{ function?: { name?: string } }>).map(
+      (item) => item.function?.name,
+    );
+    expect(sentTools.sort()).toEqual([
+      'git_diff',
+      'git_log',
+      'grep_search',
+      'list_files',
+      'read_file',
+    ]);
     // 关键：探索请求不能带 response_format，否则网关会丢弃 tool_calls、循环当场结束。
     expect(harness.requests[1]?.response_format).toBeUndefined();
     // 格式化请求反过来：不带 tools，才允许带 response_format。
@@ -384,6 +396,49 @@ describe('runAnalysis 在 ACP 入口故障时切换', () => {
       });
       expect(String(persisted.error_detail ?? '')).toContain('503');
       expect(String(persisted.error_detail ?? '')).not.toContain('acp-key');
+    },
+  );
+
+  it(
+    'ACP 分析自动挂载 gt6-readonly MCP 并传入 code/inputs/outputs 目录',
+    { timeout: 30_000 },
+    async () => {
+      const recordDir = mkdtempSync(join(tmpdir(), 'gt6-acp-mcp-'));
+      tempDirs.push(recordDir);
+      const recordPath = join(recordDir, 'record.json');
+      const { dirs, env } = makeFixture(
+        'http://127.0.0.1:9/v1',
+        [acpEntry('mcp-readonly', recordPath)],
+        { MODEL_KEY_MISTRAL: 'acp-key' },
+        false,
+      );
+
+      const outcome = await runAnalysis({
+        env,
+        dirs,
+        readonlyMcpScript: join(dirs.root, 'apps/ci/dist/readonly-mcp.js'),
+      });
+
+      expect(outcome.status).toBe('complete');
+      const recorded = JSON.parse(readFileSync(recordPath, 'utf8')) as {
+        mcpServers?: Array<{ name: string; command: string; args: string[] }>;
+      };
+      expect(recorded.mcpServers).toEqual([
+        {
+          name: 'gt6-readonly',
+          command: process.execPath,
+          args: [
+            join(dirs.root, 'apps/ci/dist/readonly-mcp.js'),
+            '--code',
+            dirs.code,
+            '--inputs',
+            dirs.inputs,
+            '--outputs',
+            dirs.outputs,
+          ],
+          env: [],
+        },
+      ]);
     },
   );
 });

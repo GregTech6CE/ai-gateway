@@ -16,6 +16,7 @@ import {
   PROTOCOL_VERSION,
   ndJsonStream,
   type Client,
+  type McpServer,
   type PermissionOption,
   type RequestPermissionRequest,
   type RequestPermissionResponse,
@@ -101,8 +102,10 @@ const READ_ONLY_TOOL_NAMES = new Set([
   'read',
   'read_file',
   'grep',
+  'grep_search',
   'glob',
   'list',
+  'list_files',
   'list_directory',
   'search',
   'codebase_search',
@@ -111,6 +114,39 @@ const READ_ONLY_TOOL_NAMES = new Set([
   'view',
   'skill',
 ]);
+
+const GT6_READONLY_MCP_TOOLS = new Set([
+  'list_files',
+  'grep_search',
+  'read_file',
+  'git_log',
+  'git_diff',
+]);
+
+const GT6_READONLY_SERVER_PREFIX = /^(?:mcp_+)?gt6[-_]readonly(?:__|[.:/_])/;
+
+/** 判定工具标识是否属于 `gt6-readonly` 提供的 5 个只读工具（兼容多种 server 前缀写法）。 */
+export function isGt6ReadOnlyMcpTool(identifier: string): boolean {
+  const lowered = identifier.trim().toLowerCase();
+  if (lowered === '') {
+    return false;
+  }
+  if (GT6_READONLY_MCP_TOOLS.has(lowered)) {
+    return true;
+  }
+  if (!GT6_READONLY_SERVER_PREFIX.test(lowered)) {
+    return false;
+  }
+  return GT6_READONLY_MCP_TOOLS.has(lowered.replace(GT6_READONLY_SERVER_PREFIX, ''));
+}
+
+function metaToolNameOf(meta: unknown): string {
+  if (typeof meta !== 'object' || meta === null) {
+    return '';
+  }
+  const toolName = (meta as { readonly tool_name?: unknown }).tool_name;
+  return typeof toolName === 'string' ? toolName : '';
+}
 
 const SECRET_MARKERS = [
   'MODEL_KEY',
@@ -170,10 +206,11 @@ function touchesSecrets(text: string): boolean {
   return touchesEnvFile(text);
 }
 
-function isReadOnlyTool(params: RequestPermissionRequest): boolean {
+export function isReadOnlyTool(params: RequestPermissionRequest): boolean {
   const call = params.toolCall;
   const name = (call.name ?? '').toLowerCase();
   const title = (call.title ?? '').toLowerCase();
+  const metaToolName = metaToolNameOf(call._meta).toLowerCase();
   if (call.kind === 'read' || call.kind === 'search' || call.kind === 'think') {
     return true;
   }
@@ -181,7 +218,18 @@ function isReadOnlyTool(params: RequestPermissionRequest): boolean {
   if (call.kind !== undefined && call.kind !== 'other') {
     return false;
   }
-  if (READ_ONLY_TOOL_NAMES.has(name) || READ_ONLY_TOOL_NAMES.has(title)) {
+  if (
+    isGt6ReadOnlyMcpTool(name) ||
+    isGt6ReadOnlyMcpTool(title) ||
+    isGt6ReadOnlyMcpTool(metaToolName)
+  ) {
+    return true;
+  }
+  if (
+    READ_ONLY_TOOL_NAMES.has(name) ||
+    READ_ONLY_TOOL_NAMES.has(title) ||
+    READ_ONLY_TOOL_NAMES.has(metaToolName)
+  ) {
     return true;
   }
   if (call.kind === undefined || call.kind === 'other') {
@@ -265,8 +313,10 @@ export interface AcpSessionOptions {
   readonly entry: ModelEntry;
   readonly apiKey: string;
   readonly cwd: string;
-  /** 额外工作区根（绝对路径）；用于让 ACP agent 读取 cwd 之外的 inputs/outputs。 */
+  /** 额外工作区根（绝对路径）；用于让子进程读取 cwd 之外的 inputs/outputs。 */
   readonly additionalDirectories?: readonly string[];
+  /** 透传到 `session/new` 的 MCP Server 列表（如本地 `gt6-readonly`）。 */
+  readonly mcpServers?: readonly McpServer[];
   readonly softTimeoutMs?: number;
   readonly loopRepeatThreshold?: number;
   readonly timeoutMs?: number;
@@ -284,6 +334,7 @@ interface CachedToolCall {
   readonly title?: string | null;
   readonly kind?: ToolKind | null;
   readonly rawInput?: unknown;
+  readonly _meta?: Record<string, unknown> | null;
 }
 
 interface ExitInfo {
@@ -454,6 +505,7 @@ class AcpSession {
       title?: string | null;
       kind?: ToolKind | null;
       rawInput?: unknown;
+      _meta?: Record<string, unknown> | null;
     } = { toolCallId: update.toolCallId };
     const name = update.name ?? previous?.name;
     if (name !== undefined && name !== null) {
@@ -471,6 +523,10 @@ class AcpSession {
       next.rawInput = update.rawInput;
     } else if (previous && 'rawInput' in previous) {
       next.rawInput = previous.rawInput;
+    }
+    const meta = update._meta ?? previous?._meta;
+    if (meta !== undefined && meta !== null) {
+      next._meta = meta;
     }
     this.#toolCalls.set(update.toolCallId, next);
   }
@@ -495,10 +551,11 @@ class AcpSession {
     }
     this.#seenTools.add(update.toolCallId);
     this.#steps += 1;
+    const stepToolName = update.name ?? (metaToolNameOf(update._meta) || update.title);
     this.#options.onStep?.({
       index: this.#steps - 1,
       text: '',
-      toolCalls: [{ name: update.name ?? update.title, input: update.rawInput }],
+      toolCalls: [{ name: stepToolName, input: update.rawInput }],
     });
     const signature = `${update.name ?? ''}:${update.title ?? ''}:${stableStringify(update.rawInput)}`;
     if (signature === this.#lastSignature) {
@@ -560,7 +617,7 @@ class AcpSession {
       const session = await this.#guard(
         this.#connection.newSession({
           cwd: this.#options.cwd,
-          mcpServers: [],
+          mcpServers: this.#options.mcpServers ? [...this.#options.mcpServers] : [],
           ...(this.#options.additionalDirectories &&
           this.#options.additionalDirectories.length > 0
             ? { additionalDirectories: [...this.#options.additionalDirectories] }

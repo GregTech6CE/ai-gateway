@@ -7,6 +7,9 @@
       "@gt6ce/agent": [
         "../../packages/agent/src/index.ts"
       ],
+      "@gt6ce/agent/readonly-mcp": [
+        "../../packages/agent/src/readonly-mcp.ts"
+      ],
       "@gt6ce/github": [
         "../../packages/github/src/index.ts"
       ],

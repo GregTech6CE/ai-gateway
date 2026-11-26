@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   acpCommandAvailable,
   classifyRelevanceWithAcp,
+  isGt6ReadOnlyMcpTool,
   runAcpAnalysis,
 } from '../src/acp-client.ts';
 import { bindings, loadPool, type ModelEntry } from '../src/model-pool.ts';
@@ -72,6 +73,11 @@ interface Recorded {
   readonly cancels: number;
   readonly decisions: string[];
   readonly additionalDirectories: string[];
+  readonly mcpServers: Array<{
+    readonly name: string;
+    readonly command: string;
+    readonly args: string[];
+  }>;
 }
 
 const tempDirs: string[] = [];
@@ -312,6 +318,59 @@ describe('runAcpAnalysis', () => {
 
       expect(outcome.answer.issue_type).toBe('bug');
       expect(outcome.finishReason).toBe('end_turn');
+    },
+  );
+
+  it(
+    '透传 mcpServers 并放行 gt6-readonly 的 5 个只读工具，拒绝写与执行工具',
+    { timeout: 15_000 },
+    async () => {
+      expect(isGt6ReadOnlyMcpTool('mcp_gt6_readonly.git_log')).toBe(true);
+      expect(isGt6ReadOnlyMcpTool('gt6-readonly:git_diff')).toBe(true);
+      expect(isGt6ReadOnlyMcpTool('gt6_readonly_grep_search')).toBe(true);
+      expect(isGt6ReadOnlyMcpTool('mcp__gt6-readonly__list_files')).toBe(true);
+      expect(isGt6ReadOnlyMcpTool('mcp_gt6_readonly.write_file')).toBe(false);
+      expect(isGt6ReadOnlyMcpTool('other_server.git_log')).toBe(false);
+
+      const dir = workDir();
+      const recordPath = join(dir, 'record.json');
+      const entry = entryFor('mcp-readonly', recordPath);
+      const outcome = await runAcpAnalysis({
+        entry,
+        apiKey: 'test-key',
+        prompt: PROMPT,
+        cwd: dir,
+        mcpServers: [
+          {
+            name: 'gt6-readonly',
+            command: process.execPath,
+            args: ['readonly-mcp.js', '--code', dir],
+            env: [],
+          },
+        ],
+        timeoutMs: 10_000,
+      });
+
+      expect(outcome.answer).toMatchObject({ issue_type: 'bug', confidence: 'high' });
+      expect(record(recordPath)).toMatchObject({
+        prompts: 1,
+        mcpServers: [
+          {
+            name: 'gt6-readonly',
+            command: process.execPath,
+            args: ['readonly-mcp.js', '--code', dir],
+          },
+        ],
+        decisions: [
+          'allow-option',
+          'allow-option',
+          'allow-option',
+          'allow-option',
+          'allow-option',
+          'deny-option',
+          'deny-option',
+        ],
+      });
     },
   );
 

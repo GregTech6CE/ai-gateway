@@ -67,8 +67,8 @@ variable token 不收敛到 `issues: write`：现有签发 action 不支持只�
   `inputs/` 里的快照；
 - 进程环境同时含有两个 endpoint 的模型 key（切换候选时不需要重新注入），执行器按当前
   endpoint 的 `api_key_env` 取用其中一把。因此"只拿得到一把 key"不成立；
-- `run_bash` 每次启动子进程都重建 `env`，只保留 `PATH`/`LANG`/`HOME`/`HTTP(S)_PROXY`，
-  模型 key 与任何 GitHub token 都不会进入子进程。
+- 只读工具基线派生的外部子进程（`rg`、`git`）每次重建最小 `env`，仅保留 `PATH` 与
+  `GIT_TERMINAL_PROMPT=0`，模型 key 与任何 GitHub token 都不会进入子进程。
 
 ## 凭据作用域
 
@@ -91,7 +91,7 @@ variable token 不收敛到 `issues: write`：现有签发 action 不支持只�
 2. App 私钥的持有者可以冒充 bot 发布评论与触发业务仓 workflow。这是已知的残余身份
    风险；它不扩大模型 key 的可达范围。
 3. `analysis` 的模型 key 确实存在于模型执行进程环境内，且两个 endpoint 的 key 同时
-   可见。防线是输出扫描、`run_bash` 的 Zero-Secret 环境、出网白名单与轮换，而不是
+   可见。防线是输出扫描、最小环境只读工具执行器、出网白名单与轮换，而不是
    沙箱——模型执行步骤直接在宿主 runner 上运行，没有人工审批。
 4. 执行发生在业务仓自己的 run 内：issue 内容、日志与 artifact 的可见性跟随业务仓，
    本仓库只发布执行器包。脱敏仍是尽力而为。

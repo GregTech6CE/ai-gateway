@@ -6,7 +6,6 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import {
   WorkspaceError,
-  buildManifest,
   buildLogDigest,
   extractZip,
   formField,
@@ -76,48 +75,6 @@ describe('版本 ref', () => {
     expect(resolveVersionTag('1.21.1', tags, {})).toBe('v1.21.1');
     expect(resolveVersionTag('1.20.1', tags, {})).toBe('');
     expect(resolveVersionTag('1.21.1', undefined, {})).toBe('');
-  });
-});
-
-describe('代码清单', () => {
-  let root: string;
-
-  beforeAll(() => {
-    root = mkdtempSync(join(tmpdir(), 'gt6ce-manifest-'));
-    mkdirSync(join(root, 'code', 'current', 'src'), { recursive: true });
-    mkdirSync(join(root, 'code', 'golden', 'src'), { recursive: true });
-    mkdirSync(join(root, 'code', 'v1.0', 'src'), { recursive: true });
-    mkdirSync(join(root, 'docs'), { recursive: true });
-    writeFileSync(join(root, 'code', 'current', 'src', 'A.java'), 'class A {}\n');
-    writeFileSync(join(root, 'code', 'golden', 'src', 'B.java'), 'class B {}\n');
-    writeFileSync(join(root, 'code', 'v1.0', 'src', 'A.java'), 'class A {}\n');
-    writeFileSync(join(root, 'docs', 'aux.md'), '# aux\n');
-  });
-
-  afterAll(() => {
-    rmSync(root, { recursive: true, force: true });
-  });
-
-  it('清点 gt6ce/golden/history/auxiliary 并统一 / 分隔', () => {
-    const manifest = buildManifest({
-      root,
-      snapshot: {
-        code_ref: 'master',
-        code_refs: ['master', 'v1.0'],
-        version_tag: 'v1.0',
-        golden: { commit: 'abc1234' },
-      },
-      auxiliaryMaterials: ['docs/aux.md', '../escape.md'],
-    });
-
-    expect(manifest.gt6ce.root).toBe('code/current');
-    expect(manifest.gt6ce.files).toEqual(['src/A.java']);
-    expect(manifest.golden?.root).toBe('code/golden');
-    expect(manifest.golden?.ref).toBe('abc1234');
-    expect(manifest.history.map((item) => item.ref)).toEqual(['v1.0']);
-    expect(manifest.history[0]?.files).toEqual(['src/A.java']);
-    expect(manifest.extra).toEqual([]);
-    expect(manifest.auxiliary.map((item) => item.root)).toEqual(['docs/aux.md']);
   });
 });
 

@@ -27,10 +27,10 @@
 | 路径 | 职责 |
 |---|---|
 | `.github/workflows/` | 只保留发布流水线；issue 分析的执行层在组织仓 `GregTech6CE/.github` |
-| `apps/ci/` | 各阶段 CLI：`gate`、`prefetch`、`manifest`、`analysis`、`render`、`write-back`、`control`、`update-health` |
+| `apps/ci/` | 各阶段 CLI：`gate`、`prefetch`、`analysis`、`render`、`write-back`、`control`、`update-health` 与本地只读 MCP 入口 `readonly-mcp` |
 | `packages/shared/` | Zod 配置与答案契约、凭据扫描、结构化日志 |
 | `packages/github/` | GitHub REST 客户端、`bot:v1` 标记协议、六轴标签、渲染与写回 |
-| `packages/agent/` | 模型池、工作区准备、只读工具与受控 bash、AI SDK 执行器 |
+| `packages/agent/` | 模型池、工作区准备、统一 5 只读工具基线、本地 stdio MCP Server 与结构化分析执行器 |
 | `packages/qqbot/` | QQ 协议适配层：网关连接、会话持久化、消息切分与序号、错误码记录 |
 | `apps/qqbot/` | QQ 机器人常驻进程：命令路由、群会话、RPC 客户端与优雅停机 |
 | `apps/agent-svc/` | 内部分析服务：任务队列、模型池调度、结构化草稿（`node:http`） |
@@ -61,8 +61,10 @@ workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod`、AI SDK
 5. 未知仓库、配置缺失或配置非法一律 fail-closed，不得退化为"默认放行"。
 6. 触发参数与 issue 文本只当数据：不拼接进 shell 语句，不参与路径构造，不当作指令。
 7. 写回前必须经过凭据扫描；命中即阻断发布，只回一条拦截说明。
-8. `run_bash` 每次启动子进程都重建 `env`，只保留 `PATH`/`LANG`/`HOME`/`HTTP(S)_PROXY`；
-   `MODEL_KEY_*` 与其他凭据不得进入子进程。只读工具的路径必须限制在工作区内。
+8. 只读工具基线的外部子进程（`rg`、`git`）统一经有界执行器启动：`shell: false`，每次重建最小
+   `env` 仅保留 `PATH` 与 `GIT_TERMINAL_PROMPT=0`；`MODEL_KEY_*` 与其他凭据不得进入子进程。
+   多根目录路径校验仅允许 `code/`、`inputs/`、`outputs/`，拒绝 `.git`、`.env` 与符号链接逃逸；
+   单次命令 15 秒超时、内存流式上限 64 KB。
 9. `analysis` job 的出网域名由 `deploy/egress-allowlist.txt` 与 harden-runner 的
    `allowed-endpoints` 共同约束，两处必须同步。
 10. `apps/qqbot` 只依赖 `@gt6ce/qqbot` 与 `@gt6ce/shared`：不得引入 `@gt6ce/agent`、
@@ -75,10 +77,11 @@ workspace 由 Rush + pnpm 管理；运行时新增依赖只允许 `zod`、AI SDK
 12. 内部服务的跨服务认证只接受 `Authorization: Bearer`，比对必须先哈希再
     `timingSafeEqual`；`/healthz` 是唯一的免鉴权路由，且只返回 `{ ok: true }`。
 
-`analysis` 内的 OpenAI 兼容入口通过工具读取工作区，没有审批环节；ACP 入口的工具链
-由子进程自带，客户端只通过 `session/request_permission` 放行只读工具、拒绝写入与
-命令执行。两种入口的隔离都来自 job 边界——没有写 token、没有 App 私钥——以及
-Zero-Secret bash 与出网白名单，**不是**来自沙箱或审批。不要用"沙箱会拦住"作为安全论证。
+`analysis` 内的 OpenAI 兼容入口与 ACP 入口共享同一套 5 只读工具基线（`list_files`、
+`grep_search`、`read_file`、`git_log`、`git_diff`）：前者在进程内直接调用，后者通过本地
+stdio MCP（`gt6-readonly`）挂载并在 `session/request_permission` 仅放行只读工具、拒绝写入与
+命令执行。两种入口的隔离都来自 job 边界——没有写 token、没有 App 私钥——以及最小环境外部命令
+执行与出网白名单，**不是**来自沙箱或审批。不要用"沙箱会拦住"作为安全论证。
 
 ## 4. Workflow 修改规则
 

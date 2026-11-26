@@ -9,9 +9,13 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./readonly-mcp": {
+      "types": "./dist/readonly-mcp.d.ts",
+      "import": "./dist/readonly-mcp.js"
     }
   },
-  "description": "模型池、工作区准备、只读工具与受控 bash，以及基于 Vercel AI SDK 的结构化分析执行器。",
+  "description": "模型池、工作区准备、统一 5 只读工具基线、本地 stdio MCP 与结构化分析执行器。",
   "scripts": {
     "build": "tsdown",
     "typecheck": "tsc --noEmit",

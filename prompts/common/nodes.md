@@ -1,19 +1,16 @@
 ## 调查方法与工具使用
 
-### 先清单，后读文件
+### 先缩小范围，再读文件
 
-1. 先读 `inputs/code_manifest.json`，按清单定位目标文件，不要遍历整个 `code/`。
-2. 读代码用 `read_file`，配合 `grep_search` 找符号；一次读一小段，避免把整份文件读进来。
-3. 需要在多个版本之间做批量对比、或拉取公开的历史关联 issue 时，用 `run_bash`：
-   - 允许的可执行文件：`python3`、`node`、`curl`、`git`。
-   - 单次 30 秒、输出有上限；不支持管道、重定向、命令替换，需要组合时分多次调用。
-   - 子进程不继承密钥，只保留 `PATH`/`LANG`/`HOME`/`HTTP(S)_PROXY`。
+1. 先读 `inputs/snapshot.json` 与 `outputs/log_digest.md`（若存在）提炼关键词、类名、堆栈帧与版本信息。
+2. 用 `list_files`（配合 `path` 与 `glob`）和 `grep_search`（先用 `files_only: true` 或较小 `max_matches`）在 `code/current/`、`code/golden/` 或 `code/<tag>/` 内定位目标文件，避免无过滤全量扫描。
+3. 读代码用 `read_file` 的 `offset`/`limit` 分段读取，避免整文件重复读入上下文。
+4. 核对近期修复记录、回归引入点或跨提交差异时，用 `git_log` 与 `git_diff`（可先设 `stat_only: true` 查看改动文件，再按 `path` 精确看 diff）。
 
 ### 调用纪律
 
-- 每次工具调用后先看返回值：`error` 表示这次调用失败，`exit_code` 非零表示命令失败；
-  失败本身不是结论，只是线索。
-- 不要重复读取同一个文件超过 3 次，不要重复执行完全相同的命令。
+- 每次工具调用后先看返回值：`error` 表示调用被拒绝或失败，`truncated` / `timed_out` 表示输出被截断，需收窄 `path`、`glob` 或 `max_matches` 后重试；失败本身不是结论，只是线索。
+- 不要重复读取同一个文件超过 3 次，不要重复执行完全相同的工具调用。
 - 不要修改 `code/` 下的任何文件，不要执行 git push，不要发评论，不要写文件。
 
 ### 收敛

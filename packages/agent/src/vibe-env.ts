@@ -87,7 +87,7 @@ function vibeConfig(model: string | undefined): string {
     'enable_telemetry = false',
     'enable_auto_approve = false',
     'enable_connectors = false',
-    'enable_mcp = false',
+    'enable_mcp = true',
     'enable_background_processes = false',
     'enable_subagents = false',
     'default_approval_policy = "ask"',
@@ -115,8 +115,8 @@ function vibeConfig(model: string | undefined): string {
 const READONLY_AGENT = [
   'display_name = "Read Only"',
   'description = "只读检索与文件读取，不写文件、不执行命令"',
-  // 3.1.4 没有 grep 工具；搜索只能走 shell，这里不保留 shell 工具配置。
-  'enabled_tools = ["read_file", "skill"]',
+  // vibe-acp 3.1.4 将名为 gt6-readonly 的 MCP 工具归一化为 gt6_readonly_<tool> 后再按 enabled_tools 过滤。
+  'enabled_tools = ["read_file", "skill", "gt6_readonly_list_files", "gt6_readonly_grep_search", "gt6_readonly_read_file", "gt6_readonly_git_log", "gt6_readonly_git_diff"]',
   '',
 ].join('\n');
 

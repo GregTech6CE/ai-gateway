@@ -5,18 +5,19 @@
 
 ## 可用工具
 
-- `list_files`：列出目录内容（递归，有上限）。
-- `read_file`：按行读取文本文件，返回可直接引用的行号。
-- `grep_search`：正则搜索（大小写不敏感），返回 `文件:行号` 与命中行。
-- `run_bash`：受控命令，仅允许 `python3` / `node` / `curl` / `git`；单次 30 秒、输出截断；
-  不支持管道、重定向与命令替换，需要组合时分多次调用。子进程不继承任何密钥环境变量。
+所有分析入口共享同一套 5 只读工具基线（单次外部命令超时 15 秒、内存流式上限 64 KB；仅允许读取 `code/`、`inputs/`、`outputs/`，拒绝 `.git`、`.env` 与符号链接逃逸）：
 
-工作区根目录就是当前目录：`inputs/` 与 `code/` 只读，不要尝试创建或修改文件。
+- `list_files`：列出指定目录内的文件（默认 `code/current`，支持可选 `glob` 与 `max_entries`）。
+- `grep_search`：大小写不敏感正则搜索（默认 `code/current`，支持 `glob`、`files_only`、`context_lines` 0–5、`max_matches`）。
+- `read_file`：按行读取文本文件（`offset`、`limit`，返回带行号文本与 `total_lines`）。
+- `git_log`：查看仓库提交历史（默认 `code/current`，支持 `path`、`ref`、`grep`、`max_count`）。
+- `git_diff`：查看 `base`/`head` 差异或单次 `commit` 改动（默认 `code/current`，支持 `path` 与 `stat_only`）。
+
+不要尝试写文件或调用任何命令执行工具。
 
 ## 输入
 
 - `inputs/snapshot.json`：issue 正文、评论、附件 URL、版本字段、`version_tag`。
-- `inputs/code_manifest.json`：`gt6ce`、`golden`、`history`、`extra` 与 `auxiliary` 的文件路径列表。
 - `inputs/logs/`：已下载并解压的日志与崩溃报告；可能不存在。
 - `outputs/log_digest.md`：日志摘要（已脱敏），可先用它定位。
 - `code/current/`：当前主分支（`master`）源码；`code/<tag>/`：历史版本；`code/golden/`：原版 GT6 参照。

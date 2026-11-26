@@ -96,14 +96,14 @@ gate ──> analysis ──> finalize
 
 ### 权限边界
 
-- **文件访问**：读 `inputs/`、`config/`、`prompts/`、`code/`；写 `inputs/`
-  （`code_manifest.json`、`logs/`）、`outputs/` 与 `code/`（worktree 与 `current`
+- **文件访问**：读 `inputs/`、`config/`、`prompts/`、`code/`；写 `inputs/logs/`、
+  `outputs/` 与 `code/`（worktree 与 `current`
   链接）；`git clone/fetch` 与 `cache/restore` /
   `cache/save` 读写 `.cache/` 下的两个 mirror；`download-artifact` 把
   `gate-bundle-<run_id>` 展开到 `.gateway`；`actions/cache` 读写 `.tools/vibe-acp`。
   不写 issue 仓库。
 - **容器权限**：`ubuntu-latest`，`timeout-minutes: 75`，无人工审批、无沙箱；隔离由 job
-  边界（无写 token、无 App 私钥）、工具路径限制、Zero-Secret bash 与出网白名单共同保证。
+  边界（无写 token、无 App 私钥）、多根目录只读工具路径限制、最小环境子进程与出网白名单共同保证。
 - **网络访问**：`deploy/egress-allowlist.txt` 列出的端点，由 harden-runner 的
   `egress-policy: block` 强制执行；`vibe-acp` 预编译包从 `github.com` 的 Release 下载，
   落在同一白名单内。改一处必须同步另一处。
@@ -119,10 +119,9 @@ gate ──> analysis ──> finalize
 2. 下载 `gate-bundle-<run_id>`（执行器、配置面与 `inputs/`），恢复两个 mirror 缓存。
 3. 同步 mirror 并创建 worktree：`code/current` 指向主 ref，`code/<slug>` 为其余 ref，
    `code/golden` 为上游固定提交；任一 ref 不可用只跳过该目录。
-4. `node dist/jobs/manifest.js`：清点文件，写 `inputs/code_manifest.json`。
-5. `node dist/jobs/prefetch.js`：下载并解压 issue 附件，写 `inputs/logs/` 与
+4. `node dist/jobs/prefetch.js`：下载并解压 issue 附件，写 `inputs/logs/` 与
    `outputs/log_digest.md`。单个附件失败只记一行说明，不中断其余附件。
-6. `node dist/jobs/analysis.js`：
+5. `node dist/jobs/analysis.js`：
    1. 读 `inputs/model.json` 的候选顺序；缺 key 的入口记 `auth` 失败后跳过。
    2. **preflight**：相关性分类优先使用 OpenAI 兼容入口，传输层错误计入健康度并换下一个，
       分类结果不可解析只表示"这次没结论"，不判入口故障。池中没有 OpenAI 兼容入口时，
@@ -130,9 +129,12 @@ gate ──> analysis ──> finalize
       HTTP 请求。
    3. **拒绝判定**：命中 `reject.only` 且置信度不低于 `reject.min_confidence` 时，
       以 `rejected` 收尾，不再进入代码分析。
-   4. **代码分析**：OpenAI 兼容入口用只读工具与受控 `run_bash` 读取工作区，最终用
-      `Output.object({ schema: AnswerSchema })` 产出结构化结论；ACP 入口由子进程自带的
-      工具链执行，客户端在 `session/request_permission` 只放行只读工具，正文按
+   4. **代码分析**：OpenAI 兼容入口与 ACP 入口共享同一套 5 只读工具基线（`list_files`、
+      `grep_search`、`read_file`、`git_log`、`git_diff`，允许根目录 `code/`、`inputs/`、
+      `outputs/`，外部命令 15 秒超时与 64 KB 流式内存上限）。OpenAI 兼容入口在进程内直接
+      调用并经 `Output.object({ schema: AnswerSchema })` 产出结构化结论；ACP 入口通过
+      `process.execPath` 启动自包含的 `dist/readonly-mcp.js` 挂载本地 `gt6-readonly` MCP，
+      客户端在 `session/request_permission` 仅放行只读工具、拒绝写入与命令执行，正文按
       `AnswerSchema` 解析，软超时或绕圈时发送 `session/cancel`。`auth`/`config` 错误
       换下一个入口；`429`/`5xx`/网络错误按 `model_pool` 配置退避重试，单入口重试耗尽
       或剩余时间不足以退避时切换下一个入口，仅全部入口失败才整体失败。ACP 入口的
@@ -209,7 +211,7 @@ issue 评论、标签，以及仓库变量 `MODEL_HEALTH`。评论与标签都�
 1. `gate` 只读：不写 issue、不发评论、不调用模型。
 2. `finalize` 不运行模型，不把 issue 正文当指令。
 3. `force` 只由维护者的显式操作产生（手动触发或 `@bot` 评论）。
-4. `run_bash` 的 `env` 每次重建，只保留 `PATH`/`LANG`/`HOME`/`HTTP(S)_PROXY`。
-5. 只读工具拒绝工作区外的路径，包括符号链接逃逸。
+4. 只读工具派生的外部子进程（`rg`、`git`）每次重建最小 `env`，仅保留 `PATH` 与 `GIT_TERMINAL_PROMPT=0`。
+5. 只读工具拒绝允许根集合（`code/`、`inputs/`、`outputs/`）之外的路径，包括 `.git`、`.env` 与符号链接逃逸。
 6. `analysis` 的出网白名单与 `deploy/egress-allowlist.txt` 同步。
 7. 写回前必须扫描；扫描失败关闭 artifact 闸门并阻断发布。

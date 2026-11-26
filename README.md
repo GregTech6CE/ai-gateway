@@ -21,13 +21,14 @@
      下载 `gt6-ci-*` 包并校验 `SHASUMS256.txt`；然后只读校验仓库配置、issue 状态、
      触发者权限、`bot:v1:` 标记与 7 天超期，通过后生成快照；显式 `force` 无视标记与
      时间窗口。产物供下游复用，不编译。
-   - `analysis`：按 issue 报告的版本检出代码、预取附件，再做相关性分类，然后由
-     `@gt6ce/agent`（只读工具 + 受控 bash）产出结构化结论。
+   - `analysis`：按 issue 报告的版本检出代码、预取附件，再做相关性分类，然后通过
+     `@gt6ce/agent` 提供的统一 5 只读工具基线（`list_files`、`grep_search`、`read_file`、
+     `git_log`、`git_diff`）产出结构化结论。
    - `finalize`：确定性渲染、凭据扫描，以 `gt6ce-bot[bot]` 身份新建评论与标签，并更新
      模型健康状态。
 
 `finalize` 在 `analysis` 失败、超时或取消时仍会运行，负责回写失败结论。分析步骤
-不持有写权限与 App 凭据；`run_bash` 只保留 `PATH`/`LANG`/`HOME`/`HTTP(S)_PROXY`，
+不持有写权限与 App 凭据；只读工具派生的外部子进程仅保留 `PATH` 与 `GIT_TERMINAL_PROMPT=0`，
 模型 key 不会进入子进程。
 
 本仓库的流水线只保留 `release-snapshot.yml`：`master` 每次构建把 4 个应用打成

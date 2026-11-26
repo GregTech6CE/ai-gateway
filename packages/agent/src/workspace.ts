@@ -1,16 +1,15 @@
 /**
- * 工作区准备：版本 ref 解析、代码清单、附件预取。
+ * 工作区准备：版本 ref 解析与附件预取。
  *
- * 三块逻辑都来自 Python 侧（`refs.py` / `manifest.py` / `prefetch.py`），行为保持等价，
- * 差别只有实现语言与两处加固：
+ * 两块逻辑都做统一加固：
  *
- * - zip 解压改为内置解析（`node:zlib` 的 `inflateRawSync` + `maxOutputLength`），
+ * - zip 解压使用内置解析（`node:zlib` 的 `inflateRawSync` + `maxOutputLength`），
  *   解压炸弹在解压时就被 zlib 截断，而不是先展开再判断大小。
  * - 所有产出的路径一律 `/` 分隔，跨平台比较与提示词里引用同一套写法。
  */
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs';
-import { dirname, join, relative, resolve, sep } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
 
 import { redactDiagnostics } from '@gt6ce/shared';
@@ -117,163 +116,6 @@ export function listRemoteTags(options: {
   } catch {
     return undefined;
   }
-}
-
-/** worktree 目录名：与工作流里的 `tr '/ ' '__'` 保持一致。 */
-export function slugifyRef(ref: string): string {
-  return ref.replaceAll('/', '_').replaceAll(' ', '_');
-}
-
-export interface ManifestSection {
-  readonly root: string;
-  readonly ref: string;
-  readonly files: string[];
-}
-
-export interface CodeManifest {
-  gt6ce: ManifestSection;
-  golden: ManifestSection | null;
-  history: ManifestSection[];
-  extra: ManifestSection[];
-  auxiliary: ManifestSection[];
-}
-
-export interface SnapshotRefs {
-  readonly code_ref?: string;
-  readonly code_refs?: string | readonly string[];
-  readonly version_tag?: string;
-  readonly golden?: { readonly repo?: string; readonly commit?: string };
-}
-
-function walkFiles(root: string): string[] {
-  const found: string[] = [];
-  const stack: string[] = [root];
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (current === undefined) {
-      break;
-    }
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      if (entry.name === '.git') {
-        continue;
-      }
-      const path = join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(path);
-      } else if (entry.isFile()) {
-        found.push(toPosix(relative(root, path)));
-      }
-    }
-  }
-  return found.sort();
-}
-
-/** 目录下的文件列表：有 `.git` 走 git 索引，否则递归遍历。 */
-export function filesFor(root: string): string[] {
-  let stats;
-  try {
-    stats = statSync(root);
-  } catch {
-    return [];
-  }
-  if (stats.isFile()) {
-    return [root.split(sep).pop() ?? root];
-  }
-  if (!stats.isDirectory()) {
-    return [];
-  }
-  try {
-    statSync(join(root, '.git'));
-    const stdout = execFileSync('git', ['-C', root, 'ls-files'], {
-      encoding: 'utf8',
-      timeout: 30_000,
-      stdio: ['ignore', 'pipe', 'ignore'],
-    });
-    return stdout
-      .split('\n')
-      .map((line) => line.trim())
-      .filter((line) => line !== '')
-      .sort();
-  } catch {
-    return walkFiles(root);
-  }
-}
-
-function sectionOf(root: string, ref: string, base: string): ManifestSection {
-  const relativePath = toPosix(relative(base, root));
-  return {
-    root: relativePath === '' ? '.' : relativePath,
-    ref,
-    files: filesFor(root),
-  };
-}
-
-/** 生成分析用代码清单：gt6ce、golden、history、extra 与 auxiliary。 */
-export function buildManifest(options: {
-  readonly root: string;
-  readonly snapshot: SnapshotRefs;
-  readonly auxiliaryMaterials?: readonly string[];
-}): CodeManifest {
-  const { root, snapshot } = options;
-  const code = join(root, 'code');
-  const primary = snapshot.code_ref ?? 'master';
-  const rawRefs = snapshot.code_refs ?? [primary];
-  const refs = typeof rawRefs === 'string' ? rawRefs.split(/\s+/).filter(Boolean) : [...rawRefs];
-  const versionTag = snapshot.version_tag ?? '';
-
-  const manifest: CodeManifest = {
-    gt6ce: sectionOf(join(code, 'current'), primary, root),
-    golden: null,
-    history: [],
-    extra: [],
-    auxiliary: [],
-  };
-
-  try {
-    statSync(join(code, 'golden'));
-    manifest.golden = sectionOf(join(code, 'golden'), snapshot.golden?.commit ?? '', root);
-  } catch {
-    manifest.golden = null;
-  }
-
-  for (const ref of refs) {
-    if (ref === primary) {
-      continue;
-    }
-    const path = join(code, slugifyRef(ref));
-    try {
-      statSync(path);
-    } catch {
-      continue;
-    }
-    const item = sectionOf(path, ref, root);
-    if (ref === versionTag) {
-      manifest.history.push(item);
-    } else {
-      manifest.extra.push(item);
-    }
-  }
-
-  const base = resolve(root);
-  for (const item of options.auxiliaryMaterials ?? []) {
-    const path = resolve(root, item);
-    if (!path.startsWith(`${base}${sep}`) && path !== base) {
-      continue;
-    }
-    try {
-      statSync(path);
-    } catch {
-      continue;
-    }
-    manifest.auxiliary.push(sectionOf(path, item, root));
-  }
-
-  return manifest;
-}
-
-export function writeManifest(path: string, manifest: CodeManifest): void {
-  mkdirSync(dirname(path), { recursive: true });
-  writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`, 'utf8');
 }
 
 export interface ArtifactLimits {

@@ -38,8 +38,7 @@ job 内部步骤写在各 job 文档。其余文档只引用，不复述。
 1. 在 `config/repos.json` 增加 `owner/name` 键（小写，大小写不敏感匹配），声明
    `enabled`、bot 身份、代码来源、标签白名单与各轴上限；`triage.label_axes` 存在时以它
    为准，`triage.write_only` 只作为没有轴配置时的白名单；未列出的仓库 fail-closed。
-   `auxiliary_materials` 是可选的文件或目录列表，会写入分析用的
-   `inputs/code_manifest.json`；只列公开材料。
+   `auxiliary_materials` 是可选的文件或目录列表，仅列公开材料。
 2. 视需要新增 `prompts/repos/<profile>/` 覆盖，并把 `prompt_profile` 指向它；
    profile 名只允许 `[a-z0-9_-]`。
 3. 在业务仓放置触发薄壳，参数以组织仓 `GregTech6CE/.github` 的 `ai-issue-runner.yml`

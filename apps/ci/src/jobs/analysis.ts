@@ -2,8 +2,9 @@
  * analysis：相关性判定 + 代码分析。
  *
  * 权限边界：这个阶段是唯一持有 `MODEL_KEY_*` 的地方，不持有 GitHub 写权限。
- * 模型出口只有 `config/models.json` 里的 baseURL；工具只读工作区，bash 走
- * Zero-Secret 环境（见 `@gt6ce/agent` 的 `run_bash`）。
+ * 模型出口只有 `config/models.json` 里的配置；OpenAI 兼容入口与 ACP 入口共享同一套
+ * 5 只读工具基线（`list_files`、`grep_search`、`read_file`、`git_log`、`git_diff`），
+ * 外部子进程仅继承最小环境（`PATH` 与 `GIT_TERMINAL_PROMPT=0`），不继承任何密钥。
  *
  * 产物约定：
  * - `outputs/answer.json`：结构化结论（只在 complete 时写）
@@ -12,12 +13,14 @@
  * - `outputs/model_health.json`：本轮更新后的健康状态
  * - `$GITHUB_OUTPUT: scan_upload`：扫描失败时关闭 artifact 闸门
  */
-import { mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, mkdirSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   AgentError,
   ModelError,
+  READONLY_MCP_SERVER_NAME,
   acpCommandAvailable,
   analyzeIssue,
   candidates,
@@ -134,9 +137,30 @@ export interface AnalysisOptions {
   readonly dirs: StageDirs;
   /** 测试注入；默认按 endpoint 建 OpenAI 兼容 provider。 */
   readonly createModel?: ModelFactory;
+  /** 测试注入；覆盖本地 `gt6-readonly` MCP 入口脚本路径。 */
+  readonly readonlyMcpScript?: string;
   readonly now?: Date;
   /** 退避等待注入，测试里避免真的 sleep。 */
   readonly sleep?: (ms: number) => Promise<void>;
+}
+
+function resolveReadonlyMcpScript(dirs: StageDirs, override?: string): string {
+  if (override) {
+    return override;
+  }
+  const here = dirname(fileURLToPath(import.meta.url));
+  const candidates = [
+    resolve(here, 'readonly-mcp.js'),
+    resolve(here, '../readonly-mcp.js'),
+    resolve(here, '../../dist/readonly-mcp.js'),
+    resolve(dirs.root, 'apps/ci/dist/readonly-mcp.js'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) {
+      return candidate;
+    }
+  }
+  return candidates[1]!;
 }
 
 const defaultSleep = async (ms: number): Promise<void> => {
@@ -158,11 +182,11 @@ function issuePrompt(snapshot: SnapshotShape | undefined, repo: string, issue: s
   return [
     `目标 issue：${repo}#${issue}`,
     '',
-    '工作目录：inputs/、code/、outputs/。只读 inputs/ 与 code/，不要写入任何文件。',
+    '工作目录允许读取的根集合：code/、inputs/、outputs/，不要写入任何文件。',
     'code/current 是当前主分支（master），诊断与修复建议以它为准；code/golden 是上游原版的固定提交，是参照实现。',
     history,
-    'inputs/code_manifest.json 列出 gt6ce、golden、history、extra 与 auxiliary 的文件路径；先读清单，再按路径读取具体文件。',
-    'inputs/logs/ 是已下载并解压的日志与崩溃报告；outputs/log_digest.md 是脱敏后的日志摘要，可先用它定位。',
+    '优先使用 5 个只读工具基线探索仓库与日志：list_files（按目录与 glob 找文件）、grep_search（定位类名/符号/堆栈关键词）、read_file（按 offset/limit 分段读取）、git_log（查看近期提交）与 git_diff（对照提交改动）。',
+    'inputs/snapshot.json 包含 issue 详情与评论；inputs/logs/ 是已下载并解压的日志与崩溃报告；outputs/log_digest.md 是脱敏后的日志摘要，可先用它定位。',
     '',
     '完成调查后直接返回结构化结论，不要写 answer.md 或 answer.json——结构化输出由执行器负责。',
   ].join('\n');
@@ -514,7 +538,25 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
     }
   }
 
-  const tools = createCodeTools({ root: dirs.root });
+  const readonlyRoots = { code: dirs.code, inputs: dirs.inputs, outputs: dirs.outputs };
+  const tools = createCodeTools({ root: dirs.root, roots: readonlyRoots });
+  const readonlyMcpScript = resolveReadonlyMcpScript(dirs, options.readonlyMcpScript);
+  const acpMcpServers = [
+    {
+      name: READONLY_MCP_SERVER_NAME,
+      command: process.execPath,
+      args: [
+        readonlyMcpScript,
+        '--code',
+        dirs.code,
+        '--inputs',
+        dirs.inputs,
+        '--outputs',
+        dirs.outputs,
+      ],
+      env: [],
+    },
+  ];
   const httpMaxRetries = budgets.model_pool.rate_limit_retries;
   const acpMaxRetries = budgets.model_pool.acp_retries;
   const startIndex = entries.indexOf(chosen);
@@ -556,14 +598,14 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
           user: userPrompt,
           profile: repoCfg.prompt_profile,
         };
-        // ACP 会话的 cwd 固定为 code/；inputs/ 与 outputs/ 作为附加工作区加入，
-        // 并在提示里说明两者的位置，避免按相对路径找不到。
+        // ACP 会话的 cwd 固定为 code/，同时挂载 gt6-readonly MCP（覆盖 code/、inputs/、outputs/），
+        // 统一使用 5 个只读工具按逻辑路径访问全部允许目录。
         const acpPrompt = {
           ...prompt,
-          user: `${userPrompt}\n\nACP 会话说明：当前工作目录是 code/（其中 current 指向主分支工作树），golden 与历史版本也在此目录下；inputs/ 与 outputs/ 不在工作目录下，其绝对路径分别为 ${dirs.inputs}、${dirs.outputs}，已作为附加工作区加入会话。\n检索要求：不要调用 bash 或其他命令执行工具；先用 inputs/code_manifest.json 与 outputs/log_digest.md 定位，再使用 read_file 的 offset/limit 只读取必要片段，避免重复读取整文件。`,
+          user: `${userPrompt}\n\nACP 会话说明：会话已挂载本地只读 MCP 服务 ${READONLY_MCP_SERVER_NAME}，提供 list_files、grep_search、read_file、git_log、git_diff 五个只读工具，统一以 code/、inputs/、outputs/ 为允许根目录（例如 code/current/...、inputs/snapshot.json、outputs/log_digest.md）。\n检索要求：不要调用 bash 或任何写入/执行工具；先读 inputs/snapshot.json 与 outputs/log_digest.md，再用 list_files / grep_search 缩小范围，配合 read_file 的 offset/limit 分段读取必要片段，需要核对变更历史时使用 git_log / git_diff。`,
         };
         const onStep = (step: AnalysisStep): void => {
-          log.info('agent step', {
+          log.info('step', {
             index: step.index,
             toolCalls: step.toolCalls.map((call) => call.name).join(','),
           });
@@ -580,6 +622,7 @@ export async function runAnalysis(options: AnalysisOptions): Promise<AnalysisOut
                 prompt: acpPrompt,
                 cwd: dirs.code,
                 additionalDirectories: [dirs.inputs, dirs.outputs],
+                mcpServers: acpMcpServers,
                 timeoutMs,
                 softTimeoutMs,
                 loopRepeatThreshold: budgets.l2.loop_repeat_threshold,

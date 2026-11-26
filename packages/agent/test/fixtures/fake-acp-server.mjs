@@ -11,7 +11,13 @@ import { createInterface } from 'node:readline';
 const scenario = process.argv[2] ?? 'read-flow';
 const recordPath = process.argv[3] ?? '';
 const sessionId = 'sess-test';
-const state = { prompts: 0, cancels: 0, decisions: [], additionalDirectories: [] };
+const state = {
+  prompts: 0,
+  cancels: 0,
+  decisions: [],
+  additionalDirectories: [],
+  mcpServers: [],
+};
 
 function persist() {
   if (recordPath) {
@@ -33,7 +39,7 @@ function sendText(text) {
   });
 }
 
-function sendToolCall(toolCallId, title, kind, rawInput, name) {
+function sendToolCall(toolCallId, title, kind, rawInput, name, meta) {
   send({
     method: 'session/update',
     params: {
@@ -46,6 +52,7 @@ function sendToolCall(toolCallId, title, kind, rawInput, name) {
         ...(kind ? { kind } : {}),
         status: 'in_progress',
         ...(rawInput ? { rawInput } : {}),
+        ...(meta ? { _meta: meta } : {}),
       },
     },
   });
@@ -112,6 +119,73 @@ function sendAnswer() {
   sendText(text.slice(0, 20));
   sendText('');
   sendText(text.slice(20));
+}
+
+async function runMcpReadonlyFlow(id) {
+  sendToolCall(
+    'mcp-list',
+    'mcp_gt6_readonly.list_files',
+    'other',
+    { path: 'code/current' },
+    undefined,
+    { tool_name: 'mcp_gt6_readonly.list_files' },
+  );
+  await askPermission('mcp-list');
+  sendToolCall(
+    'mcp-grep',
+    'gt6-readonly:grep_search',
+    'other',
+    { pattern: 'Crucible' },
+    undefined,
+    { tool_name: 'gt6-readonly:grep_search' },
+  );
+  await askPermission('mcp-grep');
+  sendToolCall(
+    'mcp-read',
+    'gt6_readonly_read_file',
+    'other',
+    { path: 'code/current/A.java' },
+    undefined,
+  );
+  await askPermission('mcp-read');
+  sendToolCall(
+    'mcp-log',
+    'mcp_gt6_readonly.git_log',
+    'other',
+    { repo: 'code/current' },
+    undefined,
+    { tool_name: 'mcp_gt6_readonly.git_log' },
+  );
+  await askPermission('mcp-log');
+  sendToolCall(
+    'mcp-diff',
+    'mcp_gt6_readonly.git_diff',
+    'other',
+    { repo: 'code/current', commit: 'HEAD' },
+    undefined,
+    { tool_name: 'mcp_gt6_readonly.git_diff' },
+  );
+  await askPermission('mcp-diff');
+  sendToolCall(
+    'mcp-write-denied',
+    'mcp_gt6_readonly.write_file',
+    'other',
+    { path: 'code/current/A.java' },
+    undefined,
+    { tool_name: 'mcp_gt6_readonly.write_file' },
+  );
+  await askPermission('mcp-write-denied');
+  sendToolCall(
+    'mcp-exec-lying',
+    'mcp_gt6_readonly.git_log',
+    'execute',
+    { repo: 'code/current' },
+    undefined,
+    { tool_name: 'mcp_gt6_readonly.git_log' },
+  );
+  await askPermission('mcp-exec-lying');
+  sendAnswer();
+  respondPrompt(id, 'end_turn');
 }
 
 async function runReadFlow(id) {
@@ -211,6 +285,10 @@ async function handlePrompt(message) {
     }, 2500);
     return;
   }
+  if (scenario === 'mcp-readonly') {
+    await runMcpReadonlyFlow(id);
+    return;
+  }
   await runReadFlow(id);
 }
 
@@ -232,6 +310,7 @@ rl.on('line', (line) => {
   }
   if (message.method === 'session/new') {
     state.additionalDirectories = message.params?.additionalDirectories ?? [];
+    state.mcpServers = message.params?.mcpServers ?? [];
     persist();
     const reply = () => send({ id: message.id, result: { sessionId } });
     if (scenario === 'slow-init') {

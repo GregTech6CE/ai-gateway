@@ -11,7 +11,6 @@ import { isJobEntry } from './common.ts';
 import { main as analysisMain } from './jobs/analysis.ts';
 import { main as controlMain } from './jobs/control.ts';
 import { main as gateMain } from './jobs/gate.ts';
-import { main as manifestMain } from './jobs/manifest.ts';
 import { main as prefetchMain } from './jobs/prefetch.ts';
 import { main as renderMain } from './jobs/render.ts';
 import { main as updateHealthMain } from './jobs/update-health.ts';
@@ -35,9 +34,6 @@ export type {
 
 export { runPrefetch } from './jobs/prefetch.ts';
 export type { PrefetchOptions } from './jobs/prefetch.ts';
-
-export { runManifest } from './jobs/manifest.ts';
-export type { ManifestOptions, ManifestSummary } from './jobs/manifest.ts';
 
 export { readRenderEnv, runRender } from './jobs/render.ts';
 export type { RenderEnv, RenderOptions, RenderOutcome } from './jobs/render.ts';
@@ -65,7 +61,6 @@ export const PACKAGE_NAME = '@gt6ce/ci';
 const COMMANDS: Readonly<Record<string, () => Promise<void>>> = {
   gate: gateMain,
   prefetch: prefetchMain,
-  manifest: manifestMain,
   analysis: analysisMain,
   render: renderMain,
   'write-back': writeBackMain,

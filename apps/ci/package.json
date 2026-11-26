@@ -5,7 +5,7 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "description": "GitHub Actions 适配层：gate / prefetch / manifest / analysis / render / write-back / control / update-health。",
+  "description": "GitHub Actions 适配层：gate / prefetch / analysis / render / write-back / control / update-health 与 readonly-mcp。",
   "files": [
     "dist"
   ],

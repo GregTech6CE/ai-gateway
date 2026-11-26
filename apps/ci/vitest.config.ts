@@ -9,6 +9,9 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   resolve: {
     alias: {
+      '@gt6ce/agent/readonly-mcp': fileURLToPath(
+        new URL('../../packages/agent/src/readonly-mcp.ts', import.meta.url),
+      ),
       '@gt6ce/agent': fileURLToPath(new URL('../../packages/agent/src/index.ts', import.meta.url)),
       '@gt6ce/github': fileURLToPath(new URL('../../packages/github/src/index.ts', import.meta.url)),
       '@gt6ce/shared': fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url)),

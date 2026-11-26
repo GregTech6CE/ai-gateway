@@ -32,7 +32,7 @@ parity 文档是对原版行为的显式裁决，优先于代码对照；两平�
 
 ## 版本与诊断顺序
 
-- 先读 `inputs/code_manifest.json`，按清单定位文件，不要遍历整个 `code/`。
+- 用 `list_files` 与 `grep_search`（配合 `path`、`glob` 或 `files_only`）精准定位文件，再用 `read_file` 按 `offset`/`limit` 分段读取，需要追踪近期修复或差异时使用 `git_log` 与 `git_diff`。
 - 先在 `code/current/`（master）确认问题是否仍然存在、是否已有修复；诊断与
   `fix_plan` / `ai_fix_hint` 都针对 master。
 - 如果 `inputs/snapshot.json` 的 `version_tag` 非空且 `code/<version_tag>/` 存在，再到
